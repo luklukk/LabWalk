@@ -169,11 +169,18 @@ static class Program
             Near(d.ReferenceA[0],1,"Landmark A x"); Near(d.ReferenceA[1],0,"Landmark A height"); Near(d.ReferenceA[2],2,"Landmark A Rhino Y becomes Z");
             Near(d.ReferenceB[0],3,"Landmark B x");
             Check(d.Omitted==1 && d.Summary.Contains("Landmarks A/B"),"Landmarks not counted as omitted; other points are");
+            file.Objects.AddPoint(new Point3d(500,6000,1500),new ObjectAttributes {Name="LabWalk marker LW1",LayerIndex=layer});
+            file.Objects.AddPoint(new Point3d(4000,6000,1200),new ObjectAttributes {Name="LabWalk marker LW2"});
+            var withMarkers=RhinoModelReader.Read(Save(file,"marker-points"),null,CancellationToken.None);
+            Check(withMarkers.Markers.Count==2 && withMarkers.Omitted==1 && withMarkers.Summary.Contains("2 calibration markers"),"Marker points read, not omitted");
+            Near(withMarkers.Markers["LW1"][0],0.5,"Marker x"); Near(withMarkers.Markers["LW1"][1],1.5,"Marker height (Rhino Z)"); Near(withMarkers.Markers["LW1"][2],6,"Marker depth (Rhino Y)");
+            file.Objects.AddPoint(new Point3d(0,0,1000),new ObjectAttributes {Name="LabWalk marker LW2"});
+            Reject(()=>RhinoModelReader.Read(Save(file,"duplicate-marker"),null,CancellationToken.None),"more than one marker");
             file.Objects.AddPoint(new Point3d(0,0,0),new ObjectAttributes {Name="LabWalk reference A"});
-            Reject(()=>RhinoModelReader.Read(Save(file,"duplicate-landmark"),null,CancellationToken.None),"more than one point");
+            Reject(()=>RhinoModelReader.Read(Save(file,"duplicate-landmark"),null,CancellationToken.None),"more than one");
         }
         SampleRoom();
-        Console.WriteLine("PASS: actual 3DM round trips, units/axes, quads/normals/colors, mirrored blocks, hidden layers, cached Breps, missing geometry, invalid file, cancellation, per-color merging and landmark points.");
+        Console.WriteLine("PASS: actual 3DM round trips, units/axes, quads/normals/colors, mirrored blocks, hidden layers, cached Breps, missing geometry, invalid file, cancellation, per-color merging, landmark and marker points.");
     }
     static void SampleRoom()
     {

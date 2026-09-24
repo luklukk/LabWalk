@@ -19,6 +19,9 @@ namespace LabWalk.Core
         public Point3 Translation;
         public double YawRadians;
         public double ModelBaselineMeters, PhysicalBaselineMeters;
+        // Marker fits only: distance between each measured point and its transformed model point.
+        public double RmsResidualMeters, MaxResidualMeters;
+        public double[] Residuals;
         public double RelativeBaselineError
         { get { return Math.Abs(PhysicalBaselineMeters-ModelBaselineMeters)/ModelBaselineMeters; } }
         public Point3 Transform(Point3 p) { return AlignmentMath.Rotate(p,YawRadians)+Translation; }
@@ -47,6 +50,61 @@ namespace LabWalk.Core
                 Translation=realA-Rotate(modelA,yaw), YawRadians=yaw,
                 ModelBaselineMeters=m.HorizontalLength, PhysicalBaselineMeters=r.HorizontalLength
             };
+        }
+
+        // Least-squares rigid fit of two or more corresponding 3D points (e.g. wall markers).
+        // Gravity fixes pitch/roll, so only yaw about the vertical axis and a 3D translation are solved;
+        // scale is never fitted. The baselines compare the widest horizontal marker spread in the model
+        // and in the room, so a mis-measured marker or wrong units shows up as RelativeBaselineError.
+        public static AlignmentResult SolveFromPoints(Point3[] model, Point3[] real)
+        {
+            if (model==null || real==null || model.Length!=real.Length) throw new ArgumentException("Point lists must correspond.");
+            if (model.Length<2) throw new ArgumentException("At least two markers are required.");
+            for (int i=0;i<model.Length;i++)
+                if (!model[i].IsFinite || !real[i].IsFinite) throw new ArgumentException("Marker points must be finite.");
+            var mc=Centroid(model); var rc=Centroid(real);
+            double dot=0, cross=0;
+            for (int i=0;i<model.Length;i++)
+            {
+                var m=model[i]-mc; var r=real[i]-rc;
+                dot+=r.X*m.X+r.Z*m.Z;
+                cross+=r.X*m.Z-r.Z*m.X;
+            }
+            var modelSpread=HorizontalSpread(model); var realSpread=HorizontalSpread(real);
+            if (modelSpread<0.5 || realSpread<0.5)
+                throw new ArgumentException("Markers must be at least 50 cm apart horizontally; spread them across the room.");
+            var yaw=Math.Atan2(cross,dot);
+            var result=new AlignmentResult {
+                YawRadians=yaw, Translation=rc-Rotate(mc,yaw),
+                ModelBaselineMeters=modelSpread, PhysicalBaselineMeters=realSpread,
+                Residuals=new double[model.Length]
+            };
+            double sum=0;
+            for (int i=0;i<model.Length;i++)
+            {
+                var d=result.Transform(model[i])-real[i];
+                var e=Math.Sqrt(d.X*d.X+d.Y*d.Y+d.Z*d.Z);
+                result.Residuals[i]=e; sum+=e*e;
+                if (e>result.MaxResidualMeters) result.MaxResidualMeters=e;
+            }
+            result.RmsResidualMeters=Math.Sqrt(sum/model.Length);
+            return result;
+        }
+
+        static Point3 Centroid(Point3[] points)
+        {
+            var c=new Point3(0,0,0);
+            foreach (var p in points) c=c+p;
+            return new Point3(c.X/points.Length,c.Y/points.Length,c.Z/points.Length);
+        }
+
+        static double HorizontalSpread(Point3[] points)
+        {
+            double best=0;
+            for (int i=0;i<points.Length;i++)
+                for (int j=i+1;j<points.Length;j++)
+                    best=Math.Max(best,(points[j]-points[i]).HorizontalLength);
+            return best;
         }
 
         public static double MetersPerUnit(string unit)

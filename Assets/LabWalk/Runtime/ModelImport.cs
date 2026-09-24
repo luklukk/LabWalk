@@ -178,13 +178,21 @@ namespace LabWalk
                 }
             }
             fileLandmarks=a!=null && b!=null;
+            var markers=new Dictionary<string,Vector3>(model.Markers);
+            foreach(var t in model.Root.GetComponentsInChildren<Transform>(true))
+                if(t.name.StartsWith(RhinoModelData.MarkerPrefix,StringComparison.Ordinal))
+                    markers[t.name.Substring(RhinoModelData.MarkerPrefix.Length).Trim()]=parent.InverseTransformPoint(t.position);
+            manifest.markers=markers.OrderBy(m=>m.Key,StringComparer.Ordinal).Select(m=>new MarkerPoint {id=m.Key,position=m.Value}).ToArray();
             var bounds=model.BoundsMeters;
             manifest.referenceA=fileLandmarks ? a.Value : new Vector3(bounds.min.x,bounds.min.y,bounds.min.z);
             manifest.referenceB=fileLandmarks ? b.Value : new Vector3(bounds.max.x,bounds.min.y,bounds.min.z);
             manifest.knownDistanceMeters=Vector3.Distance(manifest.referenceA,manifest.referenceB);
             manifest.ValidateAndGetScale();
-            return fileLandmarks ? $"Landmarks: from file, {manifest.knownDistanceMeters:F3} m apart" :
+            var markerNote=manifest.markers.Length>=2 ? $" Calibration markers: {string.Join(", ",manifest.markers.Select(m=>m.id))} (automatic placement)." :
+                manifest.markers.Length==1 ? " Only 1 calibration marker; at least 2 are needed." : "";
+            var landmarkNote=fileLandmarks ? $"Landmarks: from file, {manifest.knownDistanceMeters:F3} m apart." :
                 $"Landmarks: NONE IN FILE - using model bounding-box floor corners ({manifest.knownDistanceMeters:F2} m apart). Add Rhino points \"{RhinoModelData.ReferenceNameA}\"/\"B\" for real alignment.";
+            return landmarkNote+markerNote;
         }
 
         public static byte[] ManifestBytes(ModelManifest manifest) => Encoding.UTF8.GetBytes(JsonUtility.ToJson(manifest,true));

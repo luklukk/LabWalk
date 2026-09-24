@@ -16,6 +16,8 @@
   </application>
   <uses-feature android:name="android.hardware.vr.headtracking" android:version="1" android:required="true" />
   <uses-permission android:name="com.oculus.permission.USE_ANCHOR_API" />
+  <!-- Spatial data: required by Horizon OS QR code tracking (marker calibration). -->
+  <uses-permission android:name="com.oculus.permission.USE_SCENE" />
   <uses-feature android:name="com.oculus.feature.PASSTHROUGH" android:required="true" />
   <horizonos:uses-horizonos-sdk horizonos:minSdkVersion="65" horizonos:targetSdkVersion="205" />
 </manifest>

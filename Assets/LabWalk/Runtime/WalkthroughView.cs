@@ -75,5 +75,22 @@ namespace LabWalk
         public void Measurement(Vector3 a,Vector3 b)
         { ruler.enabled=true; ruler.SetPosition(0,a+Vector3.up*0.02f); ruler.SetPosition(1,b+Vector3.up*0.02f); }
         public void ClearMeasurement() { ruler.enabled=false; }
+
+        // Calibration markers: magenta cross where the placed model expects each QR code, cyan where it is seen.
+        readonly System.Collections.Generic.List<LineRenderer> crosses=new System.Collections.Generic.List<LineRenderer>();
+        int crossesUsed;
+        public void BeginMarkers() { crossesUsed=0; }
+        public void Marker(Vector3 position,bool seen)
+        {
+            var color=seen ? Color.cyan : Color.magenta; var size=seen ? 0.06f : 0.1f;
+            foreach(var axis in new[]{Vector3.right,Vector3.up,Vector3.forward})
+            {
+                if(crossesUsed==crosses.Count) crosses.Add(Line("Marker cross",color,0.006f));
+                var line=crosses[crossesUsed++];
+                line.startColor=color; line.endColor=color; line.enabled=true;
+                line.SetPosition(0,position-axis*size); line.SetPosition(1,position+axis*size);
+            }
+        }
+        public void EndMarkers() { for(int i=crossesUsed;i<crosses.Count;i++) crosses[i].enabled=false; }
     }
 }

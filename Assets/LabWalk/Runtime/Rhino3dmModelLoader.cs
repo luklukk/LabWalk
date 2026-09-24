@@ -60,6 +60,7 @@ namespace LabWalk
                     loaded.ReferenceA=new Vector3(decoded.ReferenceA[0],decoded.ReferenceA[1],decoded.ReferenceA[2]);
                     loaded.ReferenceB=new Vector3(decoded.ReferenceB[0],decoded.ReferenceB[1],decoded.ReferenceB[2]);
                 }
+                foreach(var marker in decoded.Markers) loaded.Markers[marker.Key]=new Vector3(marker.Value[0],marker.Value[1],marker.Value[2]);
                 return loaded;
             }
             catch { UnityEngine.Object.Destroy(root); resources.Dispose(); throw; }

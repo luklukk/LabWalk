@@ -59,6 +59,35 @@ public static class CoreTests
             Point(AlignmentMath.Rotate(p,yaw)+shift,solution.Transform(p),"random point");
         }
         passed.Add("1,000 randomized rigid transforms preserve both references and an independent point");
+        for(var i=0;i<1000;i++)
+        {
+            // Wall markers at different heights; exact data must be recovered with zero residual.
+            var yaw=random.NextDouble()*2*Math.PI-Math.PI;
+            var shift=new Point3(random.NextDouble()*40-20,random.NextDouble()*0.4-0.2,random.NextDouble()*40-20);
+            var model=new Point3[3]; var real=new Point3[3];
+            for(var k=0;k<3;k++)
+            {
+                model[k]=new Point3(random.NextDouble()*8,0.5+random.NextDouble()*2,random.NextDouble()*8);
+                real[k]=AlignmentMath.Rotate(model[k],yaw)+shift;
+            }
+            if((model[1]-model[0]).HorizontalLength<0.6 && (model[2]-model[0]).HorizontalLength<0.6) continue;
+            var fit=AlignmentMath.SolveFromPoints(model,real);
+            var p=new Point3(3.1,0,-1.7);
+            Point(AlignmentMath.Rotate(p,yaw)+shift,fit.Transform(p),"marker fit point");
+            if(fit.MaxResidualMeters>1e-6 || fit.RelativeBaselineError>1e-9) throw new Exception("Exact marker data must fit exactly.");
+        }
+        passed.Add("1,000 randomized three-marker fits recover yaw, height and translation exactly");
+        var noisyModel=new[]{new Point3(0,1.5,0),new Point3(5,1.5,0),new Point3(0,1.2,6)};
+        var noisyReal=new[]{new Point3(0.01,1.5,0),new Point3(5,1.5,-0.01),new Point3(0,1.2,6)};
+        var noisy=AlignmentMath.SolveFromPoints(noisyModel,noisyReal);
+        if(noisy.MaxResidualMeters<0.001 || noisy.MaxResidualMeters>0.02 || noisy.Residuals.Length!=3) throw new Exception("Noisy fit residuals out of range.");
+        var misplaced=AlignmentMath.SolveFromPoints(noisyModel,new[]{noisyModel[0],new Point3(5.4,1.5,0),noisyModel[2]});
+        if(misplaced.MaxResidualMeters<0.1) throw new Exception("A 40 cm marker error must show a large residual.");
+        passed.Add("Marker measurement noise and a misplaced marker are reported as residuals, never absorbed by scale");
+        Reject(()=>AlignmentMath.SolveFromPoints(new[]{zero},new[]{zero}));
+        Reject(()=>AlignmentMath.SolveFromPoints(new[]{zero,new Point3(0,1,0.1)},new[]{zero,new Point3(0,1,0.1)}));
+        Reject(()=>AlignmentMath.SolveFromPoints(new[]{zero,forward},new[]{zero}));
+        passed.Add("Single, clustered and mismatched marker sets rejected");
         return passed.ToArray();
     }
 }

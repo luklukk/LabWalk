@@ -22,10 +22,14 @@ namespace LabWalk
         // in final Unity-local meters like the meshes. Null when the file does not define them.
         public float[] ReferenceA, ReferenceB;
         public const string ReferenceNameA="LabWalk reference A", ReferenceNameB="LabWalk reference B";
+        // Calibration markers: points named "LabWalk marker <ID>" at the center of a printed QR code whose text is <ID>.
+        public const string MarkerPrefix="LabWalk marker ";
+        public readonly Dictionary<string,float[]> Markers=new Dictionary<string,float[]>();
         public string Summary => $"3DM: {Meshes.Count} meshes, {Triangles:N0} triangles; {Units} to meters. " +
             (Skipped>0 ? $"INCOMPLETE: {Skipped} unsupported/missing items. " : "") +
             (Omitted>0 ? $"{Omitted} labels/curves/points not shown. " : "") +
             (ReferenceA!=null && ReferenceB!=null ? "Landmarks A/B read from file. " : "") +
+            (Markers.Count>0 ? $"{Markers.Count} calibration markers. " : "") +
             "Basic colors; textures not imported.";
     }
 
@@ -152,6 +156,17 @@ namespace LabWalk
                     bool isA=obj.Attributes.Name==RhinoModelData.ReferenceNameA;
                     if((isA ? data.ReferenceA : data.ReferenceB)!=null) throw new InvalidDataException($"3DM has more than one point named \"{obj.Attributes.Name}\".");
                     if(isA) data.ReferenceA=value; else data.ReferenceB=value;
+                    return;
+                }
+                if(geometry is Point markerPoint && obj.Attributes.Name!=null && obj.Attributes.Name.StartsWith(RhinoModelData.MarkerPrefix,StringComparison.Ordinal))
+                {
+                    var id=obj.Attributes.Name.Substring(RhinoModelData.MarkerPrefix.Length).Trim();
+                    if(id.Length==0) throw new InvalidDataException("3DM marker point needs an ID after \""+RhinoModelData.MarkerPrefix+"\".");
+                    if(data.Markers.ContainsKey(id)) throw new InvalidDataException($"3DM has more than one marker point with ID \"{id}\".");
+                    var p=markerPoint.Location; p.Transform(transform);
+                    var value=new float[3];
+                    Set(value,0,p.X*data.MetersPerUnit,p.Z*data.MetersPerUnit,p.Y*data.MetersPerUnit);
+                    data.Markers.Add(id,value);
                     return;
                 }
                 if(!Visible(obj.Attributes)) { data.Hidden++; return; }

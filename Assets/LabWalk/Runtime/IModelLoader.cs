@@ -18,6 +18,8 @@ namespace LabWalk
         public bool Incomplete { get; private set; }
         // Optional file-defined alignment references in model-local meters, and the source unit name.
         public Vector3? ReferenceA, ReferenceB;
+        // Optional calibration markers (QR code centers) by ID, in model-local meters.
+        public readonly System.Collections.Generic.Dictionary<string,Vector3> Markers=new System.Collections.Generic.Dictionary<string,Vector3>();
         public string SourceUnits="meters";
         readonly IDisposable resources;
         public LoadedModel(GameObject root, Bounds bounds, IDisposable resources,string summary="GLB",bool incomplete=false)

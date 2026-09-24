@@ -6,6 +6,13 @@ using UnityEngine;
 namespace LabWalk
 {
     [Serializable]
+    public sealed class MarkerPoint
+    {
+        public string id;          // QR code text
+        public Vector3 position;   // QR code center, final Unity-local meters
+    }
+
+    [Serializable]
     public sealed class ModelManifest
     {
         public int schemaVersion = 1;
@@ -18,6 +25,8 @@ namespace LabWalk
         public Vector3 referenceA = Vector3.zero;
         public Vector3 referenceB = new Vector3(0,0,2);
         public float knownDistanceMeters = 2;
+        // Optional QR calibration markers; with two or more the app can place the model automatically.
+        public MarkerPoint[] markers = new MarkerPoint[0];
 
         public float ValidateAndGetScale()
         {
@@ -31,6 +40,11 @@ namespace LabWalk
             AlignmentMath.Solve(a,b,a,b);
             if (knownDistanceMeters<=0 || float.IsNaN(knownDistanceMeters) || float.IsInfinity(knownDistanceMeters))
                 throw new InvalidDataException("knownDistanceMeters must be positive.");
+            if (markers==null) markers=new MarkerPoint[0];
+            var ids=new System.Collections.Generic.HashSet<string>();
+            foreach (var m in markers)
+                if (m==null || string.IsNullOrWhiteSpace(m.id) || !ids.Add(m.id) || !ToPoint(m.position).IsFinite)
+                    throw new InvalidDataException("markers need unique ids and finite positions.");
             if(file.EndsWith(".3dm",StringComparison.OrdinalIgnoreCase))
             {
                 if(coordinateUnits=="rhinoDocument") return 1; // Reader obtains units from the 3DM header.
