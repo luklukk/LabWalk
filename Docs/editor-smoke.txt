@@ -1,0 +1,2 @@
+PASS: actual runtime GLB load; 15 renderers; dimensions 6 x 3.1 x 8 m; two-point placement; fixed scale; invariant placement across view modes.
+Desktop preview only; no headset/anchor claim.

@@ -1,0 +1,2 @@
+PASS: direct runtime 3DM loader; 5 merged meshes (one per color); 6 x 3.1 x 8 meters; unchanged placement and unit scale; shader supported; preview rendered.
+3DM: 5 meshes, 180 triangles; Millimeters to meters. Basic colors; textures not imported.

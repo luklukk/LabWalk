@@ -1,0 +1,1 @@
+﻿PASS: actual 3DM round trips, units/axes, quads/normals/colors, mirrored blocks, hidden layers, cached Breps, missing geometry, invalid file, cancellation and per-color merging.

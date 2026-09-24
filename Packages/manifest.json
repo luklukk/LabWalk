@@ -1,0 +1,20 @@
+{
+  "scopedRegistries": [{ "name": "Meta XR", "url": "https://npm.developer.oculus.com", "scopes": ["com.meta.xr"] }],
+  "dependencies": {
+    "com.unity.ugui": "2.0.0",
+    "com.meta.xr.sdk.core": "205.0.0",
+    "com.unity.cloud.gltfast": "6.20.0",
+    "com.unity.xr.openxr": "1.18.0",
+    "com.unity.xr.management": "4.6.1",
+    "com.unity.modules.androidjni": "1.0.0",
+    "com.unity.modules.animation": "1.0.0",
+    "com.unity.modules.assetbundle": "1.0.0",
+    "com.unity.modules.imageconversion": "1.0.0",
+    "com.unity.modules.jsonserialize": "1.0.0",
+    "com.unity.modules.physics": "1.0.0",
+    "com.unity.modules.physics2d": "1.0.0",
+    "com.unity.modules.unitywebrequest": "1.0.0",
+    "com.unity.modules.unitywebrequesttexture": "1.0.0",
+    "com.unity.modules.xr": "1.0.0"
+  }
+}

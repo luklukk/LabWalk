@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "modelId": "architecture-lab-v1",
+  "displayName": "Architecture lab",
+  "file": "lab.glb",
+  "sourceUnits": "millimeters",
+  "coordinateUnits": "gltfMeters",
+  "referenceA": { "x": 0, "y": 0, "z": 0 },
+  "referenceB": { "x": 0, "y": 0, "z": 2 },
+  "knownDistanceMeters": 2
+}

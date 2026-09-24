@@ -1,0 +1,5 @@
+{
+  "name": "LabWalk.Core",
+  "rootNamespace": "LabWalk.Core",
+  "noEngineReferences": true
+}

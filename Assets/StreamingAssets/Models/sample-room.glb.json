@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "modelId": "sample-room-v1",
+  "displayName": "Sample lab | 6 x 8 m",
+  "file": "sample-room.glb",
+  "sourceUnits": "meters",
+  "coordinateUnits": "gltfMeters",
+  "referenceA": { "x": 0, "y": 0, "z": 0 },
+  "referenceB": { "x": 0, "y": 0, "z": 2 },
+  "knownDistanceMeters": 2
+}

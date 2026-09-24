@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "modelId": "architecture-lab-rhino",
+  "displayName": "Architecture lab (Rhino)",
+  "file": "lab.3dm",
+  "sourceUnits": "fromDocument",
+  "coordinateUnits": "rhinoDocument",
+  "referenceA": { "x": 0, "y": 0, "z": 0 },
+  "referenceB": { "x": 0, "y": 0, "z": 2 },
+  "knownDistanceMeters": 2
+}

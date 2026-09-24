@@ -1,0 +1,24 @@
+/Library/
+/Temp/
+/Obj/
+/Logs/
+/UserSettings/
+/Builds/
+/.vs/
+*.csproj
+!/Tools/RhinoImportTests/RhinoImportTests.csproj
+/Tools/**/bin/
+/Tools/**/obj/
+/NativeBuild/
+*.sln
+*.slnx
+*.user
+*.apk
+*.aab
+/TestResults/
+# Meta recreates this local editor connection asset. Never commit its credentials.
+/Assets/Resources/DevAgentSettings.asset
+/Assets/Resources/DevAgentSettings.asset.meta
+
+# Local AI-agent tooling installed by Meta XR Operator; not part of the app.
+/.codex/
