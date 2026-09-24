@@ -56,3 +56,7 @@ Record headset OS version, build version, model fingerprint and measurements. Th
 7. **Performance:** test the actual lab export, including textures, for a sustained session. Target at least 72 FPS as a starting acceptance goal; measure with Meta performance tooling, not only the approximate HUD average. Record loading time, dropped frames, memory and thermal behavior. Optimize from these measurements.
 
 No claim of centimeter accuracy, stable whole-lab anchoring, successful persistence, walking comfort or sustained frame rate is made by this scaffold.
+
+## First headset report: v0.2.0 via Meta Horizon Device Manager (2026-09-24)
+
+Reported by the user: v0.2.0 was added from the GitHub release link in Device Manager (work.meta.com), which warned that the app **may not be compatible with shared mode**. It was installed anyway, and on the headset everything worked as expected, with no notifications or errors. This is the first physical Quest run: the Android build installs and launches, and the app is usable despite the shared-mode warning. Individual items (lab import, tape-measured scale, anchor restore after restart, frame rate) have not yet been reported separately; the checklist above still applies.
