@@ -50,3 +50,19 @@ The APK above was built before the 3DM reader began merging geometry per color. 
 | Contents checked | `LabWalkFilePicker` class present (`classes4.dex`); `librhino3dm_native.so`; bundled `sample-room.3dm` |
 
 Adds: per-color mesh merging (the lab file loads), labels/curves no longer marked INCOMPLETE, in-headset **Models** menu (left grip) with Import folder, system picker and bundled sample, review/confirm, crash-safe activation, and landmark points read from Rhino files. See [IMPORT.md](IMPORT.md). `work/Package-Quest.ps1` still validates the earlier APK hash; update it if this build replaces `LabWalk-Quest3S.apk`.
+
+## Release v0.2.0 (2026-09-24, not yet installed on a Quest)
+
+Published at https://github.com/luklukk/LabWalk/releases/tag/v0.2.0. Clean staging build of commit `ea6e228`.
+
+| Property | Value |
+|---|---|
+| APK link (Device Manager) | https://github.com/luklukk/LabWalk/releases/download/v0.2.0/LabWalk-Quest3S-0.2.0.apk |
+| Size | 95,817,022 bytes |
+| SHA-256 | `63523e7682b017492062925f5969414cbac295859e3fd964be8f56a44abaef59` |
+| MD5 | `23a973be6a725b95a1c8f592590fd71a` |
+| Version | 0.2.0, version code 2 |
+| Signing | Unity default development key on the build workstation; apksigner v2 verified. Later releases must use the same key and a higher version code. |
+| Also attached | `Handley_B1_16_LabWalk.3dm` (SHA-256 `c063ecf4...2db9`), `checksums.txt` |
+
+The APK link was downloaded without authentication and matched the SHA-256 above. This supersedes `LabWalk-Quest3S-import.apk` (same code, version code 1).
