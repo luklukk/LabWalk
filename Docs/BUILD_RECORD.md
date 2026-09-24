@@ -66,3 +66,18 @@ Published at https://github.com/luklukk/LabWalk/releases/tag/v0.2.0. Clean stagi
 | Also attached | `Handley_B1_16_LabWalk.3dm` (SHA-256 `c063ecf4...2db9`), `checksums.txt` |
 
 The APK link was downloaded without authentication and matched the SHA-256 above. This supersedes `LabWalk-Quest3S-import.apk` (same code, version code 1).
+
+## Release v0.3.0 (2026-09-24, not yet installed on a Quest)
+
+https://github.com/luklukk/LabWalk/releases/tag/v0.3.0, release build (`LabWalk.Editor.QuestBuild.BuildRelease`) of commit `e56d9e6`.
+
+| Property | Value |
+|---|---|
+| APK link (Device Manager) | https://github.com/luklukk/LabWalk/releases/download/v0.3.0/LabWalk-Quest3S-0.3.0.apk |
+| Size | 88,886,375 bytes |
+| SHA-256 | `c10c2e229acdf364f901c3013565070c3b9dd7825aa3886c4310b957922c3326` |
+| MD5 | `9ff4e14c768ff0480e3c48cefbd2c3a3` |
+| Version | 0.3.0, version code 4 |
+| Checked | apksigner v2; not debuggable; no Meta XR Operator components; `USE_SCENE` present; `libmrutilitykitshared.so` and `librhino3dm_native.so` packaged; anonymous download matched SHA-256 |
+
+0.2.1 (version code 3) was built but never published; its changes are included here.
