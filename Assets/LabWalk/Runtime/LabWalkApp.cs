@@ -154,7 +154,7 @@ namespace LabWalk
                     placement.SetPositionAndRotation(ModelManifest.ToVector(alignment.Translation),Quaternion.Euler(0,(float)(alignment.YawRadians*180/Math.PI),0));
                     placement.localScale=Vector3.one;
                     phase=Phase.Adjust; showModel=true;
-                    message=alignment.RelativeBaselineError>0.05 ? "Reference lengths differ >5%. Check units/points before saving." : "Fine tune with sticks. A saves placement; B starts alignment again.";
+                    message=alignment.RelativeBaselineError>0.05 ? "Reference lengths differ >5%. Check units/points before saving." : "Fine tune with sticks. A saves placement; X enters VR without saving; B starts alignment again.";
                 }
                 catch(Exception e) { message=e.Message; }
             }
@@ -197,7 +197,7 @@ namespace LabWalk
             catch(OperationCanceledException) { }
             catch(Exception e)
             {
-                if(this) { phase=Phase.Adjust; anchorStatus="Save failed; placement is unsaved"; message=e.Message; Debug.LogException(e); }
+                if(this) { phase=Phase.Adjust; anchorStatus="Save failed; placement is unsaved"; message=e.Message+" X still enters VR for this session."; Debug.LogException(e); }
             }
             finally
             {
@@ -396,8 +396,14 @@ namespace LabWalk
                 else if(trigger && hit) RecordReference(point);
                 if(save && phase==Phase.Adjust) _=SaveAsync();
                 else if(save && phase==Phase.Recovery) _=RestoreAsync();
-                if(toggle && (phase==Phase.Pinned || (editorPreview && phase==Phase.Adjust)) && anchorTracked)
-                { view.SetImmersive(!view.Immersive); panelVisible=!view.Immersive; showModel=true; }
+                // VR is allowed from an aligned but unsaved placement (session only): spatial anchors may be
+                // unavailable, e.g. on headsets in shared mode. The same reference-length check as saving applies.
+                var sessionOnly=phase==Phase.Adjust && alignment.RelativeBaselineError<=0.05;
+                if(toggle && (phase==Phase.Pinned || sessionOnly) && anchorTracked)
+                {
+                    view.SetImmersive(!view.Immersive); panelVisible=!view.Immersive; showModel=true;
+                    if(sessionOnly && view.Immersive && !editorPreview) message="VR with an unsaved placement: it will not be restored next launch.";
+                }
                 if(hide && !view.Immersive) showModel=!showModel;
                 if(menu) panelVisible=!panelVisible;
                 if(measure && hit && !view.Immersive)
