@@ -51,8 +51,29 @@ namespace LabWalk.Editor
                     Require(view.IsOn(toggle)!=before && toggle.Root.activeSelf==view.IsOn(toggle),"Toggle flips its object.");
                     log.AppendLine($"Toggled {toggle.Name}: {(before ? "on" : "off")} -> {(view.IsOn(toggle) ? "on" : "off")}");
                 }
+                // Wireframe: select the last option solid, overlay the first as wireframe, and draw the first toggle as wireframe.
+                foreach(var (solidOption,overlay) in new[]{(options[options.Count-1],options[0]),(options[0],options[options.Count-1])})
+                if(overlay.HasWireframe && overlay!=solidOption)
+                {
+                    view.Activate(solidOption); view.ToggleWireframe(overlay);
+                    Require(view.DisplayOf(overlay)==LayerView.Display.Wireframe && overlay.Root.activeSelf,"Unselected option shown as wireframe overlay.");
+                    Require(overlay.Solid.All(r=>!r.enabled) && overlay.Wire.All(w=>w.activeSelf),"Overlay draws lines only.");
+                    Require(view.DisplayOf(solidOption)==LayerView.Display.Solid && solidOption.Wire.All(w=>!w.activeSelf),"Selected option stays solid.");
+                    if(shots!=null) Capture(model,shots,$"TestResults/layer-view-{Safe(solidOption.Name)}-with-{Safe(overlay.Name)}-wireframe.png",ref cameraObject,ref lightObject);
+                    log.AppendLine($"{solidOption.Name} solid + {overlay.Name} wireframe overlay ({overlay.Wire.Count} line meshes). Summary: {view.Summary()}");
+                    view.ToggleWireframe(overlay);
+                    Require(view.DisplayOf(overlay)==LayerView.Display.Hidden,"Overlay off again.");
+                }
+                if(toggle!=null && toggle.HasWireframe)
+                {
+                    view.ToggleWireframe(toggle);
+                    Require(view.DisplayOf(toggle)==LayerView.Display.Wireframe && toggle.Solid.All(r=>!r.enabled),"Toggle drawn as wireframe.");
+                    if(shots!=null) Capture(model,shots,$"TestResults/layer-view-{Safe(toggle.Name)}-wireframe.png",ref cameraObject,ref lightObject);
+                    log.AppendLine($"{toggle.Name} as wireframe ({toggle.Wire.Count} line meshes).");
+                }
                 view.Activate(options[0]);
                 var reopened=new LayerView(model,fingerprint);
+                Require(toggle==null || !toggle.HasWireframe || reopened.IsWire(toggle),"Wireframe choice remembered.");
                 Require(reopened.Selected(group)==options[0],"Selected option remembered.");
                 Require(toggle==null || reopened.IsOn(toggle)==view.IsOn(toggle),"Toggle state remembered.");
                 log.AppendLine("Choices remembered across a reload of the view state.");

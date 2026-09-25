@@ -218,6 +218,13 @@ static class Program
             int MeshesIn(int g)=>d.Meshes.Count(m=>m.Group==g);
             Check(MeshesIn(-1)==1 && MeshesIn(G("Existing"))==1 && MeshesIn(G("Renovation"))==1 && MeshesIn(G("New furniture"))==1 && MeshesIn(G("Layout B"))==1,"Meshes split per switchable layer (hidden option still imported)");
             Check(MeshesIn(G("Tools"))==1 && d.Hidden==1,"Block on a toggle layer belongs to it; user-hidden sublayer stays excluded");
+            // Wireframe: each box on a switchable layer yields its 12 edges; coplanar quad diagonals are dropped.
+            int Segments(int g)=>d.Lines.Where(l=>l.Group==g).Sum(l=>l.Indices.Length/2);
+            Check(d.Lines.All(l=>l.Group>=0),"No wireframe for always-shown geometry");
+            foreach(var name in new[]{"Existing","Renovation","New furniture","Tools","Layout B"})
+                Check(Segments(G(name))==12,$"Box on {name} has 12 feature edges, got {Segments(G(name))}");
+            var existingLines=d.Lines.First(l=>l.Group==G("Existing"));
+            Check(existingLines.Positions.Length/3==8,"Welded box corners: 8 line vertices");
             Check(LayerGroupNames.TryParse("  Option :  Scheme / B ",out var k,out var og,out var n) && k==LayerGroupKind.Option && og=="Scheme" && n=="B","Name parsing");
             Check(!LayerGroupNames.TryParse("Options for later",out _,out _,out _) && !LayerGroupNames.TryParse("Toggle:",out _,out _,out _),"Non-matching names ignored");
         }

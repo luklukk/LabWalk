@@ -56,8 +56,36 @@ namespace LabWalk
                     var child=new GameObject(part.Name);
                     child.transform.SetParent(part.Group>=0 ? layers[part.Group].Root.transform : root.transform,false);
                     child.AddComponent<MeshFilter>().sharedMesh=mesh;
-                    child.AddComponent<MeshRenderer>().sharedMaterial=material;
+                    var meshRenderer=child.AddComponent<MeshRenderer>(); meshRenderer.sharedMaterial=material;
+                    if(part.Group>=0) layers[part.Group].Solid.Add(meshRenderer);
                     mesh.UploadMeshData(true);
+                    await Task.Yield();
+                }
+                // Wireframes (feature edges) for switchable layers; inactive until a layer is set to wireframe.
+                Material wireMaterial=null;
+                foreach(var line in decoded.Lines)
+                {
+                    token.ThrowIfCancellationRequested();
+                    if(!wireMaterial)
+                    {
+                        // Loaded from Resources like RhinoBasic, so it is always included in builds.
+                        var unlit=UnityEngine.Resources.Load<Shader>("LabWalkWire");
+                        if(!unlit) break; // shader missing: layers simply offer no wireframe
+                        wireMaterial=new Material(unlit) {name="Lab Walk wireframe",color=WireColor};
+                        resources.Items.Add(wireMaterial);
+                    }
+                    var lineMesh=new Mesh {name="Wireframe",indexFormat=IndexFormat.UInt32};
+                    resources.Items.Add(lineMesh);
+                    lineMesh.vertices=Vectors(line.Positions);
+                    lineMesh.SetIndices(line.Indices,MeshTopology.Lines,0);
+                    lineMesh.RecalculateBounds();
+                    lineMesh.UploadMeshData(true);
+                    var wire=new GameObject("Wireframe");
+                    wire.transform.SetParent(layers[line.Group].Root.transform,false);
+                    wire.AddComponent<MeshFilter>().sharedMesh=lineMesh;
+                    wire.AddComponent<MeshRenderer>().sharedMaterial=wireMaterial;
+                    wire.SetActive(false);
+                    layers[line.Group].Wire.Add(wire);
                     await Task.Yield();
                 }
                 token.ThrowIfCancellationRequested();
@@ -76,6 +104,8 @@ namespace LabWalk
             }
             catch { UnityEngine.Object.Destroy(root); resources.Dispose(); throw; }
         }
+
+        public static readonly Color WireColor=new Color(1f,0.55f,0.1f); // high contrast against gray architecture
 
         static Vector3[] Vectors(float[] values)
         {

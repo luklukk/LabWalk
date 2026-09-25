@@ -19,6 +19,10 @@ namespace LabWalk
         public bool DefaultOn;
         public ModelLayer Parent;
         public GameObject Root;
+        // This layer's own geometry (not that of nested switchable layers): solid meshes and wireframe lines.
+        public readonly System.Collections.Generic.List<Renderer> Solid=new System.Collections.Generic.List<Renderer>();
+        public readonly System.Collections.Generic.List<GameObject> Wire=new System.Collections.Generic.List<GameObject>();
+        public bool HasWireframe => Wire.Count>0;
         public string Key => (Parent!=null ? Parent.Key+" > " : "")+(Kind==LayerGroupKind.Option ? $"option:{OptionGroup}/{Name}" : $"toggle:{Name}");
         public string Label => Parent==null ? Name : $"{Parent.Name} > {Name}";
     }

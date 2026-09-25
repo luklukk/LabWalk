@@ -27,6 +27,8 @@ namespace LabWalk
         public readonly Dictionary<string,float[]> Markers=new Dictionary<string,float[]>();
         // Switchable layers: "Toggle: <name>" and "Option: [<group> /] <name>" (see LayerGroupNames).
         public readonly List<RhinoLayerGroup> Groups=new List<RhinoLayerGroup>();
+        // Feature edges (outlines and creases) of geometry on switchable layers, for their wireframe display.
+        public readonly List<RhinoLineData> Lines=new List<RhinoLineData>();
         public string Summary => $"3DM: {Meshes.Count} meshes, {Triangles:N0} triangles; {Units} to meters. " +
             (Groups.Count>0 ? $"{Groups.Count} switchable layers. " : "") +
             (Skipped>0 ? $"INCOMPLETE: {Skipped} unsupported/missing items. " : "") +
@@ -43,6 +45,14 @@ namespace LabWalk
         public int[] Triangles;
         public float R,G,B;
         public int Group=-1; // index into RhinoModelData.Groups; -1 = always shown
+    }
+
+    // Line segments (pairs of indices into Positions) in final Unity-local meters.
+    public sealed class RhinoLineData
+    {
+        public int Group;
+        public float[] Positions;
+        public int[] Indices;
     }
 
     // A Rhino layer whose name makes it switchable in the app. Everything on it and its sublayers belongs to it.
@@ -149,6 +159,9 @@ namespace LabWalk
                         R=b.Color.R/255f,G=b.Color.G/255f,B=b.Color.B/255f,Group=b.Group});
                 }
                 batches.Clear(); open.Clear();
+                foreach(var l in lineBatches)
+                    if(l.Indices.Count>0) data.Lines.Add(new RhinoLineData {Group=l.Group,Positions=l.Positions.ToArray(),Indices=l.Indices.ToArray()});
+                lineBatches.Clear(); openLines.Clear();
             }
             public Reader(File3dm file,RhinoModelData data,CancellationToken token)
             { this.file=file; this.data=data; this.token=token; }
@@ -328,6 +341,7 @@ namespace LabWalk
                     Triangle(batch.Triangles,offset,f.A,f.B,f.C,flip);
                     if(f.IsQuad) Triangle(batch.Triangles,offset,f.A,f.C,f.D,flip);
                 }
+                if(group>=0) AddEdges(positions,batch.Triangles,before,offset,group);
                 batch.Positions.AddRange(positions);
                 if(normals!=null) batch.Normals.AddRange(normals);
                 data.Vertices+=count; data.Triangles+=(batch.Triangles.Count-before)/3;
@@ -343,6 +357,91 @@ namespace LabWalk
                     open[key]=batch; batches.Add(batch);
                 }
                 return batch;
+            }
+
+            // ---- Feature edges for wireframe display ----
+            const int MaxLineVertices=2000000, MaxLineBatchVertices=250000;
+            const float CreaseCos=0.9397f; // edges between faces more than 20 degrees apart are drawn
+            sealed class LineBatch { public readonly List<float> Positions=new List<float>(); public readonly List<int> Indices=new List<int>(); public int Group; }
+            readonly Dictionary<int,LineBatch> openLines=new Dictionary<int,LineBatch>();
+            readonly List<LineBatch> lineBatches=new List<LineBatch>();
+            int lineVertices;
+            bool lineLimitWarned;
+
+            // One source mesh (already in meters): weld split vertices, then keep outline, crease and non-manifold
+            // edges. Coplanar triangulation diagonals and the facets of smooth curved surfaces are dropped.
+            void AddEdges(float[] positions,List<int> triangles,int start,int offset,int group)
+            {
+                int n=positions.Length/3;
+                var weld=new int[n];
+                var ids=new Dictionary<(long,long,long),int>();
+                var firstVertex=new List<int>();
+                for(int i=0;i<n;i++)
+                {
+                    var key=((long)Math.Round(positions[i*3]*1e4),(long)Math.Round(positions[i*3+1]*1e4),(long)Math.Round(positions[i*3+2]*1e4));
+                    if(!ids.TryGetValue(key,out var id)) { id=firstVertex.Count; ids.Add(key,id); firstVertex.Add(i); }
+                    weld[i]=id;
+                }
+                var edges=new Dictionary<long,(int count,float nx,float ny,float nz,bool crease)>();
+                for(int t=start;t+2<triangles.Count;t+=3)
+                {
+                    if(((t-start)&16383)==0) token.ThrowIfCancellationRequested();
+                    int i0=triangles[t]-offset, i1=triangles[t+1]-offset, i2=triangles[t+2]-offset;
+                    float ax=positions[i1*3]-positions[i0*3], ay=positions[i1*3+1]-positions[i0*3+1], az=positions[i1*3+2]-positions[i0*3+2];
+                    float bx=positions[i2*3]-positions[i0*3], by=positions[i2*3+1]-positions[i0*3+1], bz=positions[i2*3+2]-positions[i0*3+2];
+                    float nx=ay*bz-az*by, ny=az*bx-ax*bz, nz=ax*by-ay*bx;
+                    var length=(float)Math.Sqrt(nx*nx+ny*ny+nz*nz);
+                    if(length<1e-12f) continue; // degenerate sliver
+                    nx/=length; ny/=length; nz/=length;
+                    int a=weld[i0], b=weld[i1], c=weld[i2];
+                    Edge(edges,a,b,nx,ny,nz); Edge(edges,b,c,nx,ny,nz); Edge(edges,c,a,nx,ny,nz);
+                }
+                LineBatch current=null;
+                var lineIndex=new Dictionary<int,int>(); // welded vertex -> index in the current line batch
+                foreach(var e in edges)
+                {
+                    if(e.Value.count==2 && !e.Value.crease) continue;
+                    if(lineVertices+2>MaxLineVertices)
+                    {
+                        if(!lineLimitWarned && data.Warnings.Count<32) data.Warnings.Add("Wireframe edge limit reached; some layers show partial wireframes.");
+                        lineLimitWarned=true; return;
+                    }
+                    var line=LineBatchFor(group,2);
+                    if(line!=current) { current=line; lineIndex.Clear(); }
+                    line.Indices.Add(LineVertex(line,lineIndex,(int)(e.Key>>32),firstVertex,positions));
+                    line.Indices.Add(LineVertex(line,lineIndex,(int)(e.Key&0xffffffff),firstVertex,positions));
+                }
+            }
+
+            static void Edge(Dictionary<long,(int count,float nx,float ny,float nz,bool crease)> edges,int a,int b,float nx,float ny,float nz)
+            {
+                if(a==b) return;
+                var key=a<b ? ((long)a<<32)|(uint)b : ((long)b<<32)|(uint)a;
+                if(!edges.TryGetValue(key,out var e)) { edges[key]=(1,nx,ny,nz,false); return; }
+                // Winding is consistent within a mesh, so the two faces' normals compare directly.
+                // A third face on the same edge (non-manifold) always marks it.
+                var dot=e.nx*nx+e.ny*ny+e.nz*nz;
+                edges[key]=(e.count+1,e.nx,e.ny,e.nz,e.crease || e.count>=2 || dot<CreaseCos);
+            }
+
+            int LineVertex(LineBatch line,Dictionary<int,int> lineIndex,int welded,List<int> firstVertex,float[] positions)
+            {
+                if(lineIndex.TryGetValue(welded,out var index)) return index;
+                var vertex=firstVertex[welded];
+                index=line.Positions.Count/3;
+                line.Positions.Add(positions[vertex*3]); line.Positions.Add(positions[vertex*3+1]); line.Positions.Add(positions[vertex*3+2]);
+                lineIndex[welded]=index; lineVertices++;
+                return index;
+            }
+
+            LineBatch LineBatchFor(int group,int incoming)
+            {
+                if(!openLines.TryGetValue(group,out var line) || line.Positions.Count/3+incoming>MaxLineBatchVertices)
+                {
+                    line=new LineBatch {Group=group};
+                    openLines[group]=line; lineBatches.Add(line);
+                }
+                return line;
             }
 
             static void Triangle(List<int> output,int offset,int a,int b,int c,bool flip)

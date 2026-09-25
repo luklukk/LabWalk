@@ -34,7 +34,7 @@ namespace LabWalk
         float averageFrameTime=1f/72, panelTime;
         AlignmentResult alignment;
 
-        sealed class MenuItem { public string Label, Action="Open"; public Action Run; }
+        sealed class MenuItem { public string Label, Action="Open", AltAction; public Action Run, Alt; }
         LayerView layerView;
         bool modelsMenu;
         readonly MarkerCalibrator markers=new MarkerCalibrator();
@@ -245,12 +245,21 @@ namespace LabWalk
                 foreach(var option in layerView.Options(group))
                 {
                     var o=option;
-                    menuItems.Add(new MenuItem {Label=$"{group}:  {(layerView.IsOn(o) ? "(o)" : "( )")} {o.Label}",Action="Select",Run=()=>{ layerView.Activate(o); OpenViewMenu(true); }});
+                    menuItems.Add(new MenuItem {
+                        Label=$"{group}:  {(layerView.IsOn(o) ? "(o)" : "( )")} {o.Label}{(layerView.IsWire(o) ? (layerView.IsOn(o) ? "  [wireframe]" : "  [wireframe overlay]") : "")}",
+                        Action=layerView.IsOn(o) ? "Selected" : "Select",Run=()=>{ layerView.Activate(o); OpenViewMenu(true); },
+                        AltAction=o.HasWireframe ? (layerView.IsWire(o) ? (layerView.IsOn(o) ? "Solid" : "Hide overlay") : (layerView.IsOn(o) ? "Wireframe" : "Wireframe overlay")) : null,
+                        Alt=()=>{ layerView.ToggleWireframe(o); OpenViewMenu(true); }});
                 }
             foreach(var toggle in layerView.Toggles)
             {
                 var t=toggle;
-                menuItems.Add(new MenuItem {Label=$"{(layerView.IsOn(t) ? "[on]  " : "[off] ")} {t.Label}",Action=layerView.IsOn(t) ? "Hide" : "Show",Run=()=>{ layerView.Activate(t); OpenViewMenu(true); }});
+                var shown=layerView.DisplayOf(t);
+                menuItems.Add(new MenuItem {
+                    Label=$"{(shown==LayerView.Display.Hidden ? "[off]  " : shown==LayerView.Display.Wireframe ? "[wire] " : "[on]   ")} {t.Label}",
+                    Action=layerView.IsOn(t) ? "Hide" : "Show",Run=()=>{ layerView.Activate(t); OpenViewMenu(true); },
+                    AltAction=t.HasWireframe ? (shown==LayerView.Display.Wireframe ? "Solid" : "Wireframe") : null,
+                    Alt=()=>{ layerView.ToggleWireframe(t); OpenViewMenu(true); }});
             }
             menuItems.Add(new MenuItem {Label="Change model...",Action="Open",Run=OpenModelsMenu});
             menuIndex=Mathf.Clamp(index,0,menuItems.Count-1); menuOpen=true;
@@ -340,7 +349,7 @@ namespace LabWalk
             phase=resumePhase; message="Import cancelled. The current model is unchanged.";
         }
 
-        void HandleModelUi(bool accept,bool back)
+        void HandleModelUi(bool accept,bool back,bool alt)
         {
             if(phase==Phase.Importing) { if(back) importCancel?.Cancel(); return; }
             if(phase==Phase.Review) { if(accept) _=ConfirmAsync(); else if(back) CancelReview(); return; }
@@ -353,6 +362,7 @@ namespace LabWalk
             var move=MenuMove();
             if(move!=0 && menuItems.Count>0) menuIndex=(menuIndex+move+menuItems.Count)%menuItems.Count;
             if(accept && menuItems.Count>0) menuItems[menuIndex].Run();
+            else if(alt && menuItems.Count>0 && menuItems[menuIndex].Alt!=null && menuItems[menuIndex].AltAction!=null) menuItems[menuIndex].Alt();
             else if(back) { if(modelsMenu && layerView!=null && layerView.Any) OpenViewMenu(false); else menuOpen=false; }
         }
 
@@ -390,7 +400,7 @@ namespace LabWalk
             for(int i=0;i<menuItems.Count;i++) text.Append(i==menuIndex ? "> " : "   ").Append(menuItems[i].Label).Append('\n');
             if(modelsMenu) text.Append($"\nImport folder (USB / MQDH / adb):\n{ModelImport.DeviceImportPath}\n");
             if(menuNote.Length>0) text.Append(Wrap(menuNote,66)).Append('\n');
-            if(editorPreview) text.Append("\nUp/Down: choose | Enter: open | Esc: close");
+            if(editorPreview) text.Append("\nUp/Down: choose | Enter: open | W: wireframe | Esc: close");
             return text.ToString();
         }
 
@@ -477,7 +487,8 @@ namespace LabWalk
                 bool accept=editorPreview ? k!=null && k.enterKey.wasPressedThisFrame : OVRInput.GetDown(OVRInput.RawButton.A);
                 bool back=editorPreview ? k!=null && (k.escapeKey.wasPressedThisFrame || k.backspaceKey.wasPressedThisFrame) : OVRInput.GetDown(OVRInput.RawButton.B);
                 bool openModels=editorPreview ? k!=null && k.oKey.wasPressedThisFrame : OVRInput.GetDown(OVRInput.RawButton.LHandTrigger);
-                if(modelUi) HandleModelUi(accept,back);
+                bool alt=editorPreview ? k!=null && k.wKey.wasPressedThisFrame : OVRInput.GetDown(OVRInput.RawButton.X);
+                if(modelUi) HandleModelUi(accept,back,alt);
                 else if(openModels && !busy && phase!=Phase.Saving) OpenMenu();
             }
             if(model!=null && !busy && trackingHealthy && !modelUi && !menuOpen)
@@ -620,7 +631,12 @@ namespace LabWalk
                 else if(waitingForPicker) guide.Set(ControllerGuide.Control.B,"Stop waiting");
                 else
                 {
-                    if(menuItems.Count>0) guide.Set(ControllerGuide.Control.A,menuItems[Mathf.Clamp(menuIndex,0,menuItems.Count-1)].Action);
+                    if(menuItems.Count>0)
+                    {
+                        var item=menuItems[Mathf.Clamp(menuIndex,0,menuItems.Count-1)];
+                        guide.Set(ControllerGuide.Control.A,item.Action);
+                        guide.Set(ControllerGuide.Control.X,item.AltAction);
+                    }
                     guide.Set(ControllerGuide.Control.B,modelsMenu && layerView!=null && layerView.Any ? "Back" : "Close");
                     guide.Set(ControllerGuide.Control.RightStick,"Choose"); guide.Set(ControllerGuide.Control.LeftStick,"Choose");
                 }
