@@ -26,9 +26,11 @@ namespace LabWalk
         OVRSpatialAnchor activeAnchor;
         WalkthroughView view;
         Camera eye;
-        string fingerprint, message="Loading model...", anchorStatus="Not placed", measurement="Grip: measure a known floor distance";
+        string fingerprint, message="Loading model...", anchorStatus="Not placed", measurement=DefaultMeasurement;
+        const string DefaultMeasurement="";
+        ControllerGuide guide;
         Vector3 realA, measuredA;
-        bool firstMeasure, busy, editorPreview, panelVisible=true, showModel=true, trackingHealthy;
+        bool firstMeasure, busy, editorPreview, help=true, showModel=true, trackingHealthy;
         float averageFrameTime=1f/72, panelTime;
         AlignmentResult alignment;
 
@@ -67,6 +69,11 @@ namespace LabWalk
             else eye=rig.centerEyeAnchor.GetComponent<Camera>();
             eye.nearClipPlane=0.05f; eye.farClipPlane=150;
             view=new WalkthroughView(eye,editorPreview ? null : rig.GetComponent<OVRPassthroughLayer>());
+            if(!editorPreview)
+            {
+                view.MountPanel(rig.leftControllerAnchor);
+                guide=new ControllerGuide(eye,rig.leftControllerAnchor,rig.rightControllerAnchor,view.LineMaterial);
+            }
             busy=true;
             try
             {
@@ -232,7 +239,7 @@ namespace LabWalk
                 menuItems.Add(new MenuItem {Label=$"{f.Name}  ({f.Length/1048576.0:F1} MB)",Run=()=>_=ImportAsync(path,false)});
             }
             menuItems.Add(new MenuItem {Label="Bundled sample room",Run=()=>_=ImportAsync(null,true)});
-            menuIndex=0; menuOpen=true; panelVisible=true;
+            menuIndex=0; menuOpen=true;
             menuNote=menuItems.Count>(ModelImport.SystemPickerAvailable ? 2 : 1) ? "" : "No .3dm/.glb files in the import folder yet.";
         }
 
@@ -262,7 +269,7 @@ namespace LabWalk
         {
             if(busy || candidate!=null) return;
             menuOpen=false; busy=true;
-            resumePhase=phase; phase=Phase.Importing; view.SetImmersive(false); panelVisible=true;
+            resumePhase=phase; phase=Phase.Importing; view.SetImmersive(false); help=true;
             message=bundled ? "Loading the bundled sample... B cancels." : $"Loading {Path.GetFileName(path)}... B cancels.";
             importCancel=CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
             try
@@ -288,7 +295,7 @@ namespace LabWalk
                 if(!this) return;
                 candidate=null;
                 Adopt(next);
-                view.ClearMeasurement(); firstMeasure=false; measurement="Grip: measure a known floor distance";
+                view.ClearMeasurement(); firstMeasure=false; measurement=DefaultMeasurement;
                 busy=false;
                 if(editorPreview) BeginAlignment(); else await RestoreAsync();
             }
@@ -347,7 +354,8 @@ namespace LabWalk
                 if(largest>300 || largest<0.3f) text.Append("CHECK UNITS: this size is unusual for a room.\n");
                 text.Append(Wrap(m.ImportSummary,66)).Append('\n').Append(Wrap(candidate.Notes,66)).Append('\n');
                 if(m.Incomplete) text.Append("WARNING: some geometry could not be imported (see summary).\n");
-                text.Append(candidate.Bundled ? "\nA: use the bundled sample | B: cancel" : "\nA: use this model (saved for next launch) | B: cancel");
+                text.Append(candidate.Bundled ? "\nUsing the bundled sample replaces the imported model." : "\nThe chosen model is kept for the next launch.");
+                if(editorPreview) text.Append("\nEnter: use | Esc: cancel");
                 return text.ToString();
             }
             if(phase==Phase.Importing) return $"MODELS\n{Wrap(message,66)}";
@@ -355,7 +363,7 @@ namespace LabWalk
             for(int i=0;i<menuItems.Count;i++) text.Append(i==menuIndex ? "> " : "   ").Append(menuItems[i].Label).Append('\n');
             text.Append($"\nImport folder (USB / MQDH / adb):\n{ModelImport.DeviceImportPath}\n");
             if(menuNote.Length>0) text.Append(Wrap(menuNote,66)).Append('\n');
-            text.Append(editorPreview ? "\nUp/Down: choose | Enter: open | Esc: close" : "\nStick: choose | A: open | B: close");
+            if(editorPreview) text.Append("\nUp/Down: choose | Enter: open | Esc: close");
             return text.ToString();
         }
 
@@ -367,15 +375,23 @@ namespace LabWalk
         Vector3 lastPlacementPosition, lastAnchorPosition, lastHeadPosition;
         float lastPlacementYaw, lastAnchorYaw, lastHeadYaw;
 
+        // XR reports origin updates while it starts; only events after tracking has been steady are recenters.
+        float firstTrackedTime=-1;
+
         void OnRecentered()
         {
+            markers.Reset("tracking origin update");
+            if(firstTrackedTime<0 || Time.unscaledTime<firstTrackedTime+3)
+            {
+                DiagnosticsLog.Write("Tracking origin update during startup (not a recenter)");
+                return;
+            }
             if(recenterFollowUp<0)
             {
                 DiagnosticsLog.Write($"Recenter #{RecenterGuard.Count} in {phase}: before placement pos {lastPlacementPosition:F3} yaw {lastPlacementYaw:F2}; anchor pos {lastAnchorPosition:F3} yaw {lastAnchorYaw:F2}; head pos {lastHeadPosition:F3} yaw {lastHeadYaw:F2}");
                 maxHeadStep=0; maxHeadTurn=0;
             }
             recenterFollowUp=Time.unscaledTime+1.5f;
-            markers.Reset("recenter");
         }
 
         void TrackRecenter()
@@ -411,6 +427,7 @@ namespace LabWalk
             averageFrameTime=Mathf.Lerp(averageFrameTime,Time.unscaledDeltaTime,0.04f);
             trackingHealthy=editorPreview || (OVRManager.isHmdPresent && OVRManager.hasInputFocus &&
                 OVRManager.tracker != null && OVRManager.tracker.isPositionTracked);
+            if(trackingHealthy && firstTrackedTime<0) firstTrackedTime=Time.unscaledTime;
             var anchorTracked=phase!=Phase.Pinned || (activeAnchor && activeAnchor.IsTracked);
             if((!trackingHealthy || !anchorTracked) && view.Immersive)
             {
@@ -457,14 +474,14 @@ namespace LabWalk
                 var sessionOnly=phase==Phase.Adjust && alignment.RelativeBaselineError<=0.05;
                 if(toggle && (phase==Phase.Pinned || sessionOnly) && anchorTracked)
                 {
-                    view.SetImmersive(!view.Immersive); panelVisible=!view.Immersive; showModel=true;
+                    view.SetImmersive(!view.Immersive); help=!view.Immersive; showModel=true;
                     if(sessionOnly && view.Immersive && !editorPreview) message="VR with an unsaved placement: it will not be restored next launch.";
                 }
                 if(hide && !view.Immersive) showModel=!showModel;
-                if(menu) panelVisible=!panelVisible;
+                if(menu) help=!help;
                 if(measure && hit && !view.Immersive)
                 {
-                    if(!firstMeasure) { measuredA=point; firstMeasure=true; measurement="Grip at the other end of the known floor distance."; }
+                    if(!firstMeasure) { measuredA=point; firstMeasure=true; measurement="Measuring: right grip at the other end of the known distance."; }
                     else { firstMeasure=false; measurement=$"Measured {Vector3.Distance(measuredA,point):F3} m | expected {manifest.knownDistanceMeters:F3} m"; view.Measurement(measuredA,point); }
                 }
                 if(phase==Phase.Adjust) FineTune();
@@ -494,10 +511,18 @@ namespace LabWalk
                 panelTime=Time.unscaledTime+0.15f;
                 var size=model==null ? "--" : $"{model.BoundsMeters.size.x:F3} x {model.BoundsMeters.size.y:F3} x {model.BoundsMeters.size.z:F3} m (X/Y/Z)";
                 var referenceText=phase==Phase.Adjust ? $"Reference: model {alignment.ModelBaselineMeters:F3} m / room {alignment.PhysicalBaselineMeters:F3} m" : "Yellow line marks model reference A to B.";
-                var controls=editorPreview ? "Click: point | Enter: save/retry | R: realign | O: models | K: snap to markers\nV: VR preview | H: hide model | M: measure | Tab: panel\nWASD/QE: camera | right mouse: look | arrows: nudge\nZ/C: yaw | PageUp/PageDown: height" : "Right trigger: point | A: save/retry | B: realign\nX: passthrough/VR | Y: hide model | right grip: measure\nRight stick: slide | left stick: yaw / height\nLeft grip: models | left trigger: snap to markers\nMenu: panel | physical walking only";
-                if(markers.Active) referenceText=markers.Status+"\n"+referenceText;
                 var status=!trackingHealthy ? "Tracking unavailable" : !anchorTracked ? "Anchor tracking lost; use B to realign" : anchorStatus;
-                view.UpdatePanel($"LAB WALK  |  {(editorPreview ? "EDITOR PREVIEW" : Application.isEditor ? "EDITOR XR" : "QUEST")}\n{manifest?.displayName}\n{phase} | {1f/averageFrameTime:F0} FPS\n{size}\n{Wrap(model?.ImportSummary,66)}\nAnchor: {status}\n{Wrap(message,66)}\n{referenceText}\n{measurement}\n\n{controls}",panelVisible || !trackingHealthy || !anchorTracked || phase==Phase.Error || (model?.Incomplete ?? false));
+                // Button help lives on the controller tooltips; the panel keeps state and messages only.
+                var text=new StringBuilder($"{manifest?.displayName ?? "LAB WALK"}  |  {PhaseName()}\n{Wrap(message,52)}\nAnchor: {status}");
+                if(markers.Active) text.Append('\n').Append(Wrap(markers.Status,52));
+                if(measurement!=DefaultMeasurement) text.Append('\n').Append(measurement);
+                if(help)
+                    text.Append($"\n\n{1f/averageFrameTime:F0} FPS  |  {size}\n{Wrap(model?.ImportSummary,52)}\n{referenceText}");
+                else if(!editorPreview)
+                    text.Append("\nMenu button (left): show button help");
+                if(editorPreview)
+                    text.Append("\n\nClick: point | Enter: save/retry | R: realign | O: models | K: snap to markers\nV: VR preview | H: hide model | M: measure | Tab: help\nWASD/QE: camera | right mouse: look | arrows: nudge | Z/C: yaw | PageUp/PageDown: height");
+                view.UpdatePanel(text.ToString(),!view.Immersive || help || !trackingHealthy || !anchorTracked || phase==Phase.Error || (model?.Incomplete ?? false));
             }
         }
 
@@ -547,6 +572,63 @@ namespace LabWalk
         }
         bool markerPlacedLogged;
 
+        // ---- Controller tooltips: labels describe what each button does in the current state ----
+
+        void UpdateTooltips()
+        {
+            guide.Clear();
+            if(menuOpen || phase==Phase.Importing || phase==Phase.Review)
+            {
+                if(phase==Phase.Importing) guide.Set(ControllerGuide.Control.B,"Cancel loading");
+                else if(phase==Phase.Review) { guide.Set(ControllerGuide.Control.A,"Use this model"); guide.Set(ControllerGuide.Control.B,"Cancel"); }
+                else if(waitingForPicker) guide.Set(ControllerGuide.Control.B,"Stop waiting");
+                else
+                {
+                    guide.Set(ControllerGuide.Control.A,"Open"); guide.Set(ControllerGuide.Control.B,"Close");
+                    guide.Set(ControllerGuide.Control.RightStick,"Choose"); guide.Set(ControllerGuide.Control.LeftStick,"Choose");
+                }
+                return;
+            }
+            guide.Set(ControllerGuide.Control.Menu,"Hide help");
+            if(!busy && phase!=Phase.Saving) guide.Set(ControllerGuide.Control.LeftGrip,"Models");
+            if(busy || model==null) return;
+            var passthrough=!view.Immersive;
+            switch(phase)
+            {
+                case Phase.Origin: guide.Set(ControllerGuide.Control.RightTrigger,"Mark floor point A"); break;
+                case Phase.Direction: guide.Set(ControllerGuide.Control.RightTrigger,"Mark floor point B"); guide.Set(ControllerGuide.Control.B,"Start over"); break;
+                case Phase.Adjust:
+                    guide.Set(ControllerGuide.Control.A,"Save placement");
+                    guide.Set(ControllerGuide.Control.B,"Realign");
+                    guide.Set(ControllerGuide.Control.RightStick,"Slide model");
+                    guide.Set(ControllerGuide.Control.LeftStick,"Turn / raise");
+                    if(alignment.RelativeBaselineError<=0.05) guide.Set(ControllerGuide.Control.X,passthrough ? "Enter VR (unsaved)" : "Passthrough");
+                    break;
+                case Phase.Pinned:
+                    guide.Set(ControllerGuide.Control.X,passthrough ? "Enter VR" : "Passthrough");
+                    guide.Set(ControllerGuide.Control.B,"Realign");
+                    break;
+                case Phase.Recovery: guide.Set(ControllerGuide.Control.A,"Retry restore"); guide.Set(ControllerGuide.Control.B,"Realign"); break;
+                case Phase.Error: return;
+            }
+            if(passthrough && (phase==Phase.Adjust || phase==Phase.Pinned)) guide.Set(ControllerGuide.Control.Y,showModel ? "Hide model" : "Show model");
+            if(passthrough && phase!=Phase.Loading) guide.Set(ControllerGuide.Control.RightGrip,firstMeasure ? "Measure: end point" : "Measure floor");
+            if(markers.HasSolution && (phase==Phase.Adjust || phase==Phase.Pinned)) guide.Set(ControllerGuide.Control.LeftTrigger,"Snap to markers");
+        }
+
+        string PhaseName()
+        {
+            switch(phase)
+            {
+                case Phase.Origin: return markers.Active ? "Find markers or mark point A" : "Align: mark point A";
+                case Phase.Direction: return "Align: mark point B";
+                case Phase.Adjust: return "Adjust, not saved";
+                case Phase.Pinned: return view.Immersive ? "VR" : "Placed";
+                case Phase.Recovery: return "Restore failed";
+                default: return phase.ToString();
+            }
+        }
+
         void FineTune()
         {
             Vector2 slide=Vector2.zero,turn=Vector2.zero;
@@ -581,7 +663,11 @@ namespace LabWalk
             return output.ToString().TrimEnd();
         }
         void OnApplicationPause(bool paused) { if(paused && view!=null) view.SetImmersive(false); }
-        void LateUpdate() { view?.FollowCamera(); }
+        void LateUpdate()
+        {
+            view?.FollowCamera();
+            if(guide!=null) { UpdateTooltips(); guide.Update(help && trackingHealthy); }
+        }
         void OnDestroy()
         {
             RecenterGuard.Recentered-=OnRecentered; RecenterGuard.Unhook();

@@ -62,11 +62,31 @@ namespace LabWalk
             if(size.x>0 && size.y>0) text.transform.localScale=Vector3.one*Mathf.Min(0.86f/size.x,0.58f/size.y);
             FollowCamera();
         }
+        public Material LineMaterial => lineMaterial;
+
+        // The status panel rides above the left controller when it is tracked (scaled to hand distance),
+        // otherwise it falls back to floating in front of the head so messages are never lost.
+        Transform panelAnchor;
+        public void MountPanel(Transform leftControllerAnchor) { panelAnchor=leftControllerAnchor; }
+
         public void FollowCamera()
         {
             if(!panel.gameObject.activeSelf) return;
-            panel.position=camera.transform.TransformPoint(new Vector3(-0.46f,0.35f,1.2f));
-            panel.rotation=camera.transform.rotation;
+            var head=camera.transform;
+            if(panelAnchor && OVRInput.GetControllerPositionTracked(OVRInput.Controller.LTouch))
+            {
+                const float scale=0.22f;
+                // Backing center is at (0.43,-0.29) in panel space; put its lower edge above the tooltips' top row.
+                var center=panelAnchor.position+head.up*(0.32f*scale+0.08f);
+                var rotation=Quaternion.LookRotation(center-head.position,head.up);
+                panel.localScale=Vector3.one*scale;
+                panel.rotation=rotation;
+                panel.position=center-rotation*new Vector3(0.43f,-0.29f,0)*scale;
+                return;
+            }
+            panel.localScale=Vector3.one;
+            panel.position=head.TransformPoint(new Vector3(-0.46f,0.35f,1.2f));
+            panel.rotation=head.rotation;
         }
         public void Pointer(Vector3 origin,Vector3 end,bool visible)
         { pointer.enabled=visible; pointer.SetPosition(0,origin); pointer.SetPosition(1,end); }

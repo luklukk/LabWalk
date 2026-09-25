@@ -23,6 +23,8 @@ Generated scene/settings, asset metadata and `Packages/packages-lock.json` are i
 
 ## First walkthrough
 
+**Controls (0.4.0):** both controllers appear as tracked models (Meta's Touch Plus models via `OVRControllerPrefab`). Labels on the controllers show what each button does in the current step; the **Menu** button on the left controller hides or shows them. A small status panel rides above the left controller (it moves in front of your view if that controller is not tracked). The steps below name the same buttons.
+
 The original sample room has a 6 m by 8 m footprint, 3 m walls, a desk, and a 1 m calibration cube. Its two yellow reference markers are at model coordinates `(0, 0, 0)` and `(0, 0, 2)` in Unity meters. The floor slab extends 0.1 m below the floor, so the overall reported Y bound is 3.1 m.
 
 1. Place two physical floor marks 2 m apart within your usable boundary. Set the headset floor level correctly.
@@ -30,7 +32,7 @@ The original sample room has a 6 m by 8 m footprint, 3 m walls, a desk, and a 1 
 3. Use the **right stick** to slide the model relative to where you face. Use the **left stick horizontally** for yaw and **vertically** for height. Adjustments move the model; scale stays fixed. **Y** hides/shows the model to inspect the physical room.
 4. Press the **right grip** at each end of a known floor distance. The green measurement and model bounds provide a scale check. For the sample, compare the two yellow marks against a tape-measured 2 m span.
 5. Press **A** to save. A reference-distance discrepancy over 5% blocks saving and asks for realignment or corrected units. This is a basic mistake check, not a precision guarantee.
-6. Inspect physical landmarks, then press **X** to enter VR. Walk physically within the system boundary. Press X again for passthrough, **Menu** for the status panel, or **B** to realign.
+6. Inspect physical landmarks, then press **X** to enter VR. Walk physically within the system boundary. Press X again for passthrough, or **B** to realign.
 
 After a restart, the app attempts to restore the saved anchor, starting in passthrough. If it cannot localize, **A** retries and **B** starts a new alignment. A changed model or manifest requires realignment. On tracking loss the app returns to passthrough and hides content whose placement cannot be trusted; VR must be explicitly re-entered.
 
