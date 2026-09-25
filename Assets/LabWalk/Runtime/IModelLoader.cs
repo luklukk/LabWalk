@@ -10,8 +10,22 @@ namespace LabWalk
         Task<LoadedModel> LoadAsync(byte[] data, Transform parent, float metersPerCoordinateUnit, CancellationToken token);
     }
 
+    // A switchable layer of the loaded model (Rhino "Toggle:"/"Option:" layers, or GLB nodes with those names).
+    // Showing it activates Root; a nested layer is only visible while its enclosing layer is visible too.
+    public sealed class ModelLayer
+    {
+        public LayerGroupKind Kind;
+        public string OptionGroup, Name;
+        public bool DefaultOn;
+        public ModelLayer Parent;
+        public GameObject Root;
+        public string Key => (Parent!=null ? Parent.Key+" > " : "")+(Kind==LayerGroupKind.Option ? $"option:{OptionGroup}/{Name}" : $"toggle:{Name}");
+        public string Label => Parent==null ? Name : $"{Parent.Name} > {Name}";
+    }
+
     public sealed class LoadedModel : IDisposable
     {
+        public readonly System.Collections.Generic.List<ModelLayer> Layers=new System.Collections.Generic.List<ModelLayer>();
         public GameObject Root { get; private set; }
         public Bounds BoundsMeters { get; private set; }
         public string ImportSummary { get; private set; }

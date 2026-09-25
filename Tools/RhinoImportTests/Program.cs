@@ -179,8 +179,50 @@ static class Program
             file.Objects.AddPoint(new Point3d(0,0,0),new ObjectAttributes {Name="LabWalk reference A"});
             Reject(()=>RhinoModelReader.Read(Save(file,"duplicate-landmark"),null,CancellationToken.None),"more than one");
         }
+        using(var file=new File3dm())
+        {
+            // Switchable layers: options (exclusive), toggles, nesting, hidden defaults, own-off sublayers, blocks.
+            file.Settings.ModelUnitSystem=UnitSystem.Meters;
+            int Add(string name,bool visible,Guid parentId=default)
+            {
+                var layer=new Layer {Id=Guid.NewGuid(),Name=name,IsVisible=visible,ParentLayerId=parentId};
+                file.AllLayers.Add(layer); return file.AllLayers.FindId(layer.Id).Index;
+            }
+            Guid IdOf(int index)=>file.AllLayers.FindIndex(index).Id;
+            int shell=Add("Shell",true);
+            int existing=Add("Option: Existing",true);
+            int renovation=Add("Option: Renovation",false);
+            int newWalls=Add("New walls",false,IdOf(renovation));          // off only because its parent is off
+            file.AllLayers.FindIndex(newWalls).SetPersistentVisibility(true);
+            int furniture=Add("Toggle: New furniture",false,IdOf(renovation)); // nested toggle
+            file.AllLayers.FindIndex(furniture).SetPersistentVisibility(true);
+            int tools=Add("toggle:Tools",true);
+            int oldTools=Add("Retired",false,IdOf(tools));                   // turned off by the user: stays excluded
+            int layout=Add("Option: Furniture / Layout B",true);
+            file.Objects.AddMesh(Box(0,0,0,1,1,1),new ObjectAttributes {LayerIndex=shell});
+            file.Objects.AddMesh(Box(2,0,0,1,1,1),new ObjectAttributes {LayerIndex=existing});
+            file.Objects.AddMesh(Box(4,0,0,1,1,1),new ObjectAttributes {LayerIndex=newWalls});
+            file.Objects.AddMesh(Box(6,0,0,1,1,1),new ObjectAttributes {LayerIndex=furniture});
+            file.Objects.AddMesh(Box(8,0,0,1,1,1),new ObjectAttributes {LayerIndex=oldTools});
+            file.Objects.AddMesh(Box(10,0,0,1,1,1),new ObjectAttributes {LayerIndex=layout});
+            file.AllInstanceDefinitions.Add("bench","",Point3d.Origin,new GeometryBase[]{Box(0,0,0,1,1,1)},new[]{new ObjectAttributes {LayerIndex=shell}});
+            file.Objects.AddInstanceObject(new InstanceReferenceGeometry(file.AllInstanceDefinitions.First(x=>x.Name=="bench").Id,Transform.Translation(12,0,0)),new ObjectAttributes {LayerIndex=tools});
+            var d=RhinoModelReader.Read(Save(file,"switchable-layers"),null,CancellationToken.None);
+            int G(string name)=>d.Groups.FindIndex(g=>g.Name==name);
+            Check(d.Groups.Count==5,"Five switchable layers: "+string.Join(", ",d.Groups.Select(g=>g.Kind+" "+g.OptionGroup+"/"+g.Name)));
+            var ex=d.Groups[G("Existing")]; var ren=d.Groups[G("Renovation")]; var nf=d.Groups[G("New furniture")]; var tl=d.Groups[G("Tools")]; var lb=d.Groups[G("Layout B")];
+            Check(ex.Kind==LayerGroupKind.Option && ex.OptionGroup=="Design" && ex.DefaultOn,"Existing is a default-on Design option");
+            Check(ren.Kind==LayerGroupKind.Option && !ren.DefaultOn,"Renovation is an option, off in the file");
+            Check(nf.Kind==LayerGroupKind.Toggle && nf.Parent==G("Renovation") && nf.DefaultOn,"Nested toggle inside Renovation keeps its remembered state");
+            Check(tl.Kind==LayerGroupKind.Toggle && tl.DefaultOn && lb.OptionGroup=="Furniture","Case-insensitive toggle; named option group");
+            int MeshesIn(int g)=>d.Meshes.Count(m=>m.Group==g);
+            Check(MeshesIn(-1)==1 && MeshesIn(G("Existing"))==1 && MeshesIn(G("Renovation"))==1 && MeshesIn(G("New furniture"))==1 && MeshesIn(G("Layout B"))==1,"Meshes split per switchable layer (hidden option still imported)");
+            Check(MeshesIn(G("Tools"))==1 && d.Hidden==1,"Block on a toggle layer belongs to it; user-hidden sublayer stays excluded");
+            Check(LayerGroupNames.TryParse("  Option :  Scheme / B ",out var k,out var og,out var n) && k==LayerGroupKind.Option && og=="Scheme" && n=="B","Name parsing");
+            Check(!LayerGroupNames.TryParse("Options for later",out _,out _,out _) && !LayerGroupNames.TryParse("Toggle:",out _,out _,out _),"Non-matching names ignored");
+        }
         SampleRoom();
-        Console.WriteLine("PASS: actual 3DM round trips, units/axes, quads/normals/colors, mirrored blocks, hidden layers, cached Breps, missing geometry, invalid file, cancellation, per-color merging, landmark and marker points.");
+        Console.WriteLine("PASS: actual 3DM round trips, units/axes, quads/normals/colors, mirrored blocks, hidden layers, cached Breps, missing geometry, invalid file, cancellation, per-color merging, landmark and marker points, switchable layers.");
     }
     static void SampleRoom()
     {

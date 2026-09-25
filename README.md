@@ -42,6 +42,8 @@ After a restart, the app attempts to restore the saved anchor, starting in passt
 
 **Automatic placement (0.3.0):** tape printed QR codes to the walls and add matching `LabWalk marker <ID>` points to the Rhino file; the headset then places the model itself and flags drift. See the [marker guide](Docs/MARKERS.md).
 
+**Design options and layer switches:** name Rhino layers `Option: Existing` / `Option: Renovation` or `Toggle: Tools` to switch them in the headset (left grip > View). See the [layer guide](Docs/LAYERS.md).
+
 **Developer route (bundled or pushed manifest):** for direct import, put `lab.3dm` in `Assets/StreamingAssets/Models` and copy `lab.3dm.example.json` over `model.json`. Set the two floor references using the [3DM geometry and units guide](Docs/RHINO_3DM.md). To switch sample formats, copy `sample-room.3dm.json` or `sample-room.glb.json` over `model.json`.
 
 Follow [Rhino export and scale](Docs/RHINO_EXPORT.md). Put your self-contained `lab.glb` beside `Assets/StreamingAssets/Models/model.json` and edit that manifest, using `lab.example.json` as a guide. Reference A and B must correspond to physical floor landmarks in the real lab. They are specified in imported Unity-local **meters**.

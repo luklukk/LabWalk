@@ -25,7 +25,10 @@ namespace LabWalk
         // Calibration markers: points named "LabWalk marker <ID>" at the center of a printed QR code whose text is <ID>.
         public const string MarkerPrefix="LabWalk marker ";
         public readonly Dictionary<string,float[]> Markers=new Dictionary<string,float[]>();
+        // Switchable layers: "Toggle: <name>" and "Option: [<group> /] <name>" (see LayerGroupNames).
+        public readonly List<RhinoLayerGroup> Groups=new List<RhinoLayerGroup>();
         public string Summary => $"3DM: {Meshes.Count} meshes, {Triangles:N0} triangles; {Units} to meters. " +
+            (Groups.Count>0 ? $"{Groups.Count} switchable layers. " : "") +
             (Skipped>0 ? $"INCOMPLETE: {Skipped} unsupported/missing items. " : "") +
             (Omitted>0 ? $"{Omitted} labels/curves/points not shown. " : "") +
             (ReferenceA!=null && ReferenceB!=null ? "Landmarks A/B read from file. " : "") +
@@ -39,6 +42,44 @@ namespace LabWalk
         public float[] Positions, Normals;
         public int[] Triangles;
         public float R,G,B;
+        public int Group=-1; // index into RhinoModelData.Groups; -1 = always shown
+    }
+
+    // A Rhino layer whose name makes it switchable in the app. Everything on it and its sublayers belongs to it.
+    public sealed class RhinoLayerGroup
+    {
+        public LayerGroupKind Kind;
+        public string OptionGroup;  // options only: choices in the same group are mutually exclusive
+        public string Name;
+        public bool DefaultOn;      // the layer's visibility in the file
+        public int Parent=-1;       // enclosing switchable layer, if nested (both must be on)
+        public string LayerPath;
+    }
+
+    public enum LayerGroupKind { Toggle, Option }
+
+    public static class LayerGroupNames
+    {
+        public const string DefaultOptionGroup="Design";
+        static readonly System.Text.RegularExpressions.Regex Pattern=new System.Text.RegularExpressions.Regex(
+            @"^\s*(toggle|option)\s*:\s*(.+?)\s*$",System.Text.RegularExpressions.RegexOptions.IgnoreCase|System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+        // "Toggle: Tools" -> Toggle "Tools"; "Option: Renovation" -> Design/Renovation; "Option: Furniture / Layout A" -> Furniture/Layout A.
+        public static bool TryParse(string layerName,out LayerGroupKind kind,out string optionGroup,out string name)
+        {
+            kind=LayerGroupKind.Toggle; optionGroup=null; name=null;
+            var m=layerName==null ? null : Pattern.Match(layerName);
+            if(m==null || !m.Success) return false;
+            name=m.Groups[2].Value;
+            if(m.Groups[1].Value.Equals("option",StringComparison.OrdinalIgnoreCase))
+            {
+                kind=LayerGroupKind.Option;
+                var slash=name.IndexOf('/');
+                optionGroup=slash>0 ? name.Substring(0,slash).Trim() : DefaultOptionGroup;
+                if(slash>0) name=name.Substring(slash+1).Trim();
+            }
+            return name.Length>0 && (optionGroup==null || optionGroup.Length>0);
+        }
     }
 
     public static class RhinoModelReader
@@ -68,7 +109,7 @@ namespace LabWalk
                 {
                     token.ThrowIfCancellationRequested();
                     if(!obj.Attributes.IsInstanceDefinitionObject)
-                        reader.Object(obj,Transform.Identity,null,new HashSet<Guid>(),0);
+                        reader.Object(obj,Transform.Identity,null,new HashSet<Guid>(),0,-1);
                 }
                 reader.Finish();
                 if(data.Meshes.Count==0)
@@ -91,9 +132,10 @@ namespace LabWalk
                 public readonly List<int> Triangles=new List<int>();
                 public System.Drawing.Color Color;
                 public bool HasNormals;
+                public int Group;
                 public int VertexCount => Positions.Count/3;
             }
-            readonly Dictionary<(int,bool),Batch> open=new Dictionary<(int,bool),Batch>();
+            readonly Dictionary<(int,bool,int),Batch> open=new Dictionary<(int,bool,int),Batch>();
             readonly List<Batch> batches=new List<Batch>();
 
             public void Finish()
@@ -104,7 +146,7 @@ namespace LabWalk
                     data.Meshes.Add(new RhinoMeshData {
                         Name=$"Rhino #{b.Color.R:X2}{b.Color.G:X2}{b.Color.B:X2} ({data.Meshes.Count+1})",
                         Positions=b.Positions.ToArray(),Normals=b.HasNormals ? b.Normals.ToArray() : null,Triangles=b.Triangles.ToArray(),
-                        R=b.Color.R/255f,G=b.Color.G/255f,B=b.Color.B/255f});
+                        R=b.Color.R/255f,G=b.Color.G/255f,B=b.Color.B/255f,Group=b.Group});
                 }
                 batches.Clear(); open.Clear();
             }
@@ -117,19 +159,48 @@ namespace LabWalk
                 if(data.Warnings.Count<32) data.Warnings.Add(message);
             }
 
-            bool Visible(ObjectAttributes attributes)
+            readonly Dictionary<int,(bool visible,int group)> layerCache=new Dictionary<int,(bool,int)>();
+            readonly Dictionary<Guid,int> groupByLayer=new Dictionary<Guid,int>();
+
+            // Returns whether an object is imported and which switchable layer (if any) it belongs to.
+            // A switchable layer's own on/off state is its default in the app, not a filter, so hidden ones are
+            // still imported. Below it, a sublayer turned off by the user stays excluded; a sublayer that is only
+            // off because its switchable parent is off keeps its remembered (persistent) visibility.
+            (bool visible,int group) Resolve(ObjectAttributes attributes)
             {
-                if(!attributes.Visible) return false;
-                var layer=file.AllLayers.FindIndex(attributes.LayerIndex);
+                if(!attributes.Visible) return (false,-1);
+                if(layerCache.TryGetValue(attributes.LayerIndex,out var cached)) return cached;
+                var chain=new List<Layer>();
                 var seen=new HashSet<Guid>();
-                while(layer!=null)
+                for(var layer=file.AllLayers.FindIndex(attributes.LayerIndex); layer!=null; layer=layer.ParentLayerId==Guid.Empty ? null : file.AllLayers.FindId(layer.ParentLayerId))
                 {
                     if(!seen.Add(layer.Id)) throw new InvalidDataException("3DM has cyclic layer parents.");
-                    if(!layer.IsVisible) return false;
-                    if(layer.ParentLayerId==Guid.Empty) break;
-                    layer=file.AllLayers.FindId(layer.ParentLayerId);
+                    chain.Add(layer); // leaf first
                 }
-                return true;
+                bool visible=true; int group=-1, parentGroup=-1;
+                // Walk root to leaf so nested switchable layers know their enclosing one.
+                for(int i=chain.Count-1;i>=0;i--)
+                {
+                    var layer=chain[i];
+                    var parentLayer=i+1<chain.Count ? chain[i+1] : null;
+                    var ownOn=parentLayer==null || parentLayer.IsVisible ? layer.IsVisible : layer.GetPersistentVisibility();
+                    if(LayerGroupNames.TryParse(layer.Name,out var kind,out var optionGroup,out var name))
+                    {
+                        if(!groupByLayer.TryGetValue(layer.Id,out var index))
+                        {
+                            index=data.Groups.Count;
+                            data.Groups.Add(new RhinoLayerGroup {Kind=kind,OptionGroup=optionGroup,Name=name,DefaultOn=ownOn,Parent=parentGroup,LayerPath=layer.FullPath});
+                            groupByLayer.Add(layer.Id,index);
+                        }
+                        group=parentGroup=index;
+                        continue;
+                    }
+                    // Outside any switchable layer the rule is unchanged: every layer must be visible.
+                    if(!(group>=0 ? ownOn : layer.IsVisible)) { visible=false; break; }
+                }
+                var result=(visible,visible ? group : -1);
+                layerCache[attributes.LayerIndex]=result;
+                return result;
             }
 
             System.Drawing.Color Color(ObjectAttributes a,System.Drawing.Color? parent)
@@ -143,7 +214,8 @@ namespace LabWalk
                 return a.ColorSource==ObjectColorSource.ColorFromObject ? a.ObjectColor : layer?.Color ?? System.Drawing.Color.LightGray;
             }
 
-            public void Object(File3dmObject obj,Transform transform,System.Drawing.Color? parent,HashSet<Guid> stack,int depth)
+            // group: the switchable layer of the enclosing block instance, inherited unless this object's own layer has one.
+            public void Object(File3dmObject obj,Transform transform,System.Drawing.Color? parent,HashSet<Guid> stack,int depth,int group)
             {
                 token.ThrowIfCancellationRequested();
                 if(++visits>100000) throw new InvalidDataException("3DM exceeds the 100,000 object/instance limit. Simplify the model.");
@@ -169,7 +241,9 @@ namespace LabWalk
                     data.Markers.Add(id,value);
                     return;
                 }
-                if(!Visible(obj.Attributes)) { data.Hidden++; return; }
+                var (visible,ownGroup)=Resolve(obj.Attributes);
+                if(!visible) { data.Hidden++; return; }
+                if(ownGroup>=0) group=ownGroup;
                 var color=Color(obj.Attributes,parent);
                 var name=string.IsNullOrEmpty(obj.Attributes.Name) ? obj.Id.ToString() : obj.Attributes.Name;
                 if(geometry is InstanceReferenceGeometry instance)
@@ -186,12 +260,12 @@ namespace LabWalk
                         {
                             var child=file.Objects.FindId(id);
                             if(child==null) Skip(name+": missing block object");
-                            else Object(child,transform*instance.Xform,color,stack,depth+1);
+                            else Object(child,transform*instance.Xform,color,stack,depth+1,group);
                         }
                     }
                     finally { stack.Remove(instance.ParentIdefId); }
                 }
-                else if(geometry is Mesh mesh) AddMesh(mesh,transform,color,name);
+                else if(geometry is Mesh mesh) AddMesh(mesh,transform,color,name,group);
                 else if(geometry is Brep brep)
                 {
                     foreach(var face in brep.Faces)
@@ -199,7 +273,7 @@ namespace LabWalk
                         using(var cached=face.GetMesh(MeshType.Render))
                         {
                             if(cached==null) Skip(name+": surface face has no saved render mesh");
-                            else AddMesh(cached,transform,color,name);
+                            else AddMesh(cached,transform,color,name,group);
                         }
                     }
                 }
@@ -208,14 +282,14 @@ namespace LabWalk
                     using(var cached=extrusion.GetMesh(MeshType.Render))
                     {
                         if(cached==null) Skip(name+": extrusion has no saved render mesh");
-                        else AddMesh(cached,transform,color,name);
+                        else AddMesh(cached,transform,color,name,group);
                     }
                 }
                 else if(geometry is Curve || geometry is Point || geometry is PointCloud || geometry is TextDot || geometry is AnnotationBase) data.Omitted++;
                 else Skip(name+": unsupported "+geometry?.GetType().Name+" (convert to mesh in Rhino)");
             }
 
-            void AddMesh(Mesh source,Transform transform,System.Drawing.Color color,string name)
+            void AddMesh(Mesh source,Transform transform,System.Drawing.Color color,string name,int group)
             {
                 token.ThrowIfCancellationRequested();
                 int count=source.Vertices.Count, faces=source.Faces.Count;
@@ -243,7 +317,7 @@ namespace LabWalk
                         else Set(normals,i,v.X,v.Z,v.Y);
                     }
                 }
-                var batch=BatchFor(color,normals!=null,count);
+                var batch=BatchFor(color,normals!=null,group,count);
                 int offset=batch.VertexCount, before=batch.Triangles.Count;
                 bool flip=transform.Determinant>=0; // Axis swap reflects; mirrored blocks reflect a second time.
                 for(int i=0;i<faces;i++)
@@ -259,12 +333,13 @@ namespace LabWalk
                 data.Vertices+=count; data.Triangles+=(batch.Triangles.Count-before)/3;
             }
 
-            Batch BatchFor(System.Drawing.Color color,bool normals,int incoming)
+            // One batch per color and switchable layer, so each layer can be shown or hidden on its own.
+            Batch BatchFor(System.Drawing.Color color,bool normals,int group,int incoming)
             {
-                var key=(color.ToArgb(),normals);
+                var key=(color.ToArgb(),normals,group);
                 if(!open.TryGetValue(key,out var batch) || batch.VertexCount+incoming>MaxBatchVertices)
                 {
-                    batch=new Batch {Color=color,HasNormals=normals};
+                    batch=new Batch {Color=color,HasNormals=normals,Group=group};
                     open[key]=batch; batches.Add(batch);
                 }
                 return batch;

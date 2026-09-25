@@ -28,6 +28,15 @@ namespace LabWalk
                 if(!shader) throw new InvalidDataException("Rhino material shader was stripped from this build.");
                 var materials=new Dictionary<Color,Material>();
                 var bounds=new Bounds(); bool first=true;
+                // One object per switchable layer, nested like the Rhino layers (parents are listed before children).
+                var layers=new List<ModelLayer>();
+                foreach(var g in decoded.Groups)
+                {
+                    var parentLayer=g.Parent>=0 ? layers[g.Parent] : null;
+                    var go=new GameObject((g.Kind==LayerGroupKind.Option ? "Option " : "Toggle ")+g.LayerPath);
+                    go.transform.SetParent(parentLayer!=null ? parentLayer.Root.transform : root.transform,false);
+                    layers.Add(new ModelLayer {Kind=g.Kind,OptionGroup=g.OptionGroup,Name=g.Name,DefaultOn=g.DefaultOn,Parent=parentLayer,Root=go});
+                }
                 foreach(var part in decoded.Meshes)
                 {
                     token.ThrowIfCancellationRequested();
@@ -45,7 +54,7 @@ namespace LabWalk
                         materials.Add(color,material); resources.Items.Add(material);
                     }
                     var child=new GameObject(part.Name);
-                    child.transform.SetParent(root.transform,false);
+                    child.transform.SetParent(part.Group>=0 ? layers[part.Group].Root.transform : root.transform,false);
                     child.AddComponent<MeshFilter>().sharedMesh=mesh;
                     child.AddComponent<MeshRenderer>().sharedMaterial=material;
                     mesh.UploadMeshData(true);
@@ -61,6 +70,8 @@ namespace LabWalk
                     loaded.ReferenceB=new Vector3(decoded.ReferenceB[0],decoded.ReferenceB[1],decoded.ReferenceB[2]);
                 }
                 foreach(var marker in decoded.Markers) loaded.Markers[marker.Key]=new Vector3(marker.Value[0],marker.Value[1],marker.Value[2]);
+                // Layers without any geometry (e.g. only curves or labels) are not offered as switches.
+                foreach(var layer in layers) if(layer.Root.GetComponentInChildren<Renderer>(true)) loaded.Layers.Add(layer);
                 return loaded;
             }
             catch { UnityEngine.Object.Destroy(root); resources.Dispose(); throw; }

@@ -34,7 +34,9 @@ namespace LabWalk
         float averageFrameTime=1f/72, panelTime;
         AlignmentResult alignment;
 
-        sealed class MenuItem { public string Label; public Action Run; }
+        sealed class MenuItem { public string Label, Action="Open"; public Action Run; }
+        LayerView layerView;
+        bool modelsMenu;
         readonly MarkerCalibrator markers=new MarkerCalibrator();
         bool markerPlaced, userAdjusted;
         ModelCandidate candidate;
@@ -107,6 +109,7 @@ namespace LabWalk
             model.Root.transform.SetParent(placement,false);
             model.Root.SetActive(false);
             markers.SetMarkers(manifest.markers);
+            layerView=new LayerView(model,fingerprint);
             markerPlaced=false;
             next.Model=null; next.Dispose();
             previous?.Dispose();
@@ -227,11 +230,35 @@ namespace LabWalk
             }
         }
 
-        // ---- Models menu: import folder files, the system picker and the bundled sample ----
+        // ---- View menu (switchable layers) and Models menu (import folder files, system picker, bundled sample) ----
 
         void OpenMenu()
         {
-            menuItems.Clear();
+            if(layerView!=null && layerView.Any) OpenViewMenu(false); else OpenModelsMenu();
+        }
+
+        void OpenViewMenu(bool keepIndex)
+        {
+            var index=keepIndex ? menuIndex : 0;
+            menuItems.Clear(); modelsMenu=false; menuNote="";
+            foreach(var group in layerView.OptionGroups)
+                foreach(var option in layerView.Options(group))
+                {
+                    var o=option;
+                    menuItems.Add(new MenuItem {Label=$"{group}:  {(layerView.IsOn(o) ? "(o)" : "( )")} {o.Label}",Action="Select",Run=()=>{ layerView.Activate(o); OpenViewMenu(true); }});
+                }
+            foreach(var toggle in layerView.Toggles)
+            {
+                var t=toggle;
+                menuItems.Add(new MenuItem {Label=$"{(layerView.IsOn(t) ? "[on]  " : "[off] ")} {t.Label}",Action=layerView.IsOn(t) ? "Hide" : "Show",Run=()=>{ layerView.Activate(t); OpenViewMenu(true); }});
+            }
+            menuItems.Add(new MenuItem {Label="Change model...",Action="Open",Run=OpenModelsMenu});
+            menuIndex=Mathf.Clamp(index,0,menuItems.Count-1); menuOpen=true;
+        }
+
+        void OpenModelsMenu()
+        {
+            menuItems.Clear(); modelsMenu=true;
             if(ModelImport.SystemPickerAvailable) menuItems.Add(new MenuItem {Label="Browse headset files...",Run=StartPicker});
             foreach(var f in ModelImport.ListImportFiles())
             {
@@ -326,7 +353,7 @@ namespace LabWalk
             var move=MenuMove();
             if(move!=0 && menuItems.Count>0) menuIndex=(menuIndex+move+menuItems.Count)%menuItems.Count;
             if(accept && menuItems.Count>0) menuItems[menuIndex].Run();
-            else if(back) menuOpen=false;
+            else if(back) { if(modelsMenu && layerView!=null && layerView.Any) OpenViewMenu(false); else menuOpen=false; }
         }
 
         int MenuMove()
@@ -359,9 +386,9 @@ namespace LabWalk
                 return text.ToString();
             }
             if(phase==Phase.Importing) return $"MODELS\n{Wrap(message,66)}";
-            text.Append($"MODELS\nCurrent: {manifest?.displayName ?? "none"}\n\n");
+            text.Append(modelsMenu ? $"MODELS\nCurrent: {manifest?.displayName ?? "none"}\n\n" : $"VIEW  |  {manifest?.displayName}\n\n");
             for(int i=0;i<menuItems.Count;i++) text.Append(i==menuIndex ? "> " : "   ").Append(menuItems[i].Label).Append('\n');
-            text.Append($"\nImport folder (USB / MQDH / adb):\n{ModelImport.DeviceImportPath}\n");
+            if(modelsMenu) text.Append($"\nImport folder (USB / MQDH / adb):\n{ModelImport.DeviceImportPath}\n");
             if(menuNote.Length>0) text.Append(Wrap(menuNote,66)).Append('\n');
             if(editorPreview) text.Append("\nUp/Down: choose | Enter: open | Esc: close");
             return text.ToString();
@@ -464,6 +491,13 @@ namespace LabWalk
                 bool measure=editorPreview ? keys!=null && keys.mKey.wasPressedThisFrame : OVRInput.GetDown(OVRInput.RawButton.RHandTrigger);
                 bool menu=editorPreview ? keys!=null && keys.tabKey.wasPressedThisFrame : OVRInput.GetDown(OVRInput.RawButton.Start);
                 bool snap=editorPreview ? keys!=null && keys.kKey.wasPressedThisFrame : OVRInput.GetDown(OVRInput.RawButton.LIndexTrigger);
+                bool nextDesign=editorPreview ? keys!=null && keys.lKey.wasPressedThisFrame : OVRInput.GetDown(OVRInput.RawButton.LThumbstick);
+                if(nextDesign && layerView!=null && layerView.OptionGroups.Count>0)
+                {
+                    var next=layerView.NextOption(layerView.OptionGroups[0]);
+                    layerView.Activate(next);
+                    message=$"Showing {layerView.OptionGroups[0]}: {next.Name}";
+                }
                 if(realign) BeginAlignment();
                 else if(trigger && hit) RecordReference(point);
                 else if(snap && markers.HasSolution) ApplyMarkerFit("Re-snapped to markers");
@@ -514,6 +548,8 @@ namespace LabWalk
                 var status=!trackingHealthy ? "Tracking unavailable" : !anchorTracked ? "Anchor tracking lost; use B to realign" : anchorStatus;
                 // Button help lives on the controller tooltips; the panel keeps state and messages only.
                 var text=new StringBuilder($"{manifest?.displayName ?? "LAB WALK"}  |  {PhaseName()}\n{Wrap(message,52)}\nAnchor: {status}");
+                var designs=layerView?.Summary();
+                if(designs!=null) text.Append('\n').Append(Wrap(designs,52));
                 if(markers.Active) text.Append('\n').Append(Wrap(markers.Status,52));
                 if(measurement!=DefaultMeasurement) text.Append('\n').Append(measurement);
                 if(help)
@@ -584,13 +620,17 @@ namespace LabWalk
                 else if(waitingForPicker) guide.Set(ControllerGuide.Control.B,"Stop waiting");
                 else
                 {
-                    guide.Set(ControllerGuide.Control.A,"Open"); guide.Set(ControllerGuide.Control.B,"Close");
+                    if(menuItems.Count>0) guide.Set(ControllerGuide.Control.A,menuItems[Mathf.Clamp(menuIndex,0,menuItems.Count-1)].Action);
+                    guide.Set(ControllerGuide.Control.B,modelsMenu && layerView!=null && layerView.Any ? "Back" : "Close");
                     guide.Set(ControllerGuide.Control.RightStick,"Choose"); guide.Set(ControllerGuide.Control.LeftStick,"Choose");
                 }
                 return;
             }
             guide.Set(ControllerGuide.Control.Menu,"Hide help");
-            if(!busy && phase!=Phase.Saving) guide.Set(ControllerGuide.Control.LeftGrip,"Models");
+            if(!busy && phase!=Phase.Saving) guide.Set(ControllerGuide.Control.LeftGrip,layerView!=null && layerView.Any ? "View / models" : "Models");
+            // Left stick click cycles the first design option; the adjust label is combined with it below.
+            var cycle=layerView!=null && layerView.OptionGroups.Count>0 && model!=null ? "Click: "+layerView.NextOption(layerView.OptionGroups[0]).Name : null;
+            if(cycle!=null && phase!=Phase.Adjust) guide.Set(ControllerGuide.Control.LeftStick,cycle);
             if(busy || model==null) return;
             var passthrough=!view.Immersive;
             switch(phase)
@@ -601,7 +641,7 @@ namespace LabWalk
                     guide.Set(ControllerGuide.Control.A,"Save placement");
                     guide.Set(ControllerGuide.Control.B,"Realign");
                     guide.Set(ControllerGuide.Control.RightStick,"Slide model");
-                    guide.Set(ControllerGuide.Control.LeftStick,"Turn / raise");
+                    guide.Set(ControllerGuide.Control.LeftStick,cycle!=null ? "Turn / raise  |  "+cycle : "Turn / raise");
                     if(alignment.RelativeBaselineError<=0.05) guide.Set(ControllerGuide.Control.X,passthrough ? "Enter VR (unsaved)" : "Passthrough");
                     break;
                 case Phase.Pinned:

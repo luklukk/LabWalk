@@ -38,7 +38,19 @@ namespace LabWalk
                     }
                 }
                 if(first) throw new InvalidDataException("GLB contains no renderable meshes.");
-                return new LoadedModel(root,bounds,gltf);
+                var loaded=new LoadedModel(root,bounds,gltf);
+                // Nodes named like Rhino switchable layers ("Toggle: Tools", "Option: Renovation") become switches.
+                var byNode=new System.Collections.Generic.Dictionary<Transform,ModelLayer>();
+                foreach(var t in root.GetComponentsInChildren<Transform>(true))
+                {
+                    if(t==root.transform || !LayerGroupNames.TryParse(t.name,out var kind,out var optionGroup,out var name)) continue;
+                    ModelLayer parentLayer=null;
+                    for(var p=t.parent; p && p!=root.transform && parentLayer==null; p=p.parent) byNode.TryGetValue(p,out parentLayer);
+                    var layer=new ModelLayer {Kind=kind,OptionGroup=optionGroup,Name=name,DefaultOn=t.gameObject.activeSelf,Parent=parentLayer,Root=t.gameObject};
+                    byNode[t]=layer;
+                    if(t.GetComponentInChildren<Renderer>(true)) loaded.Layers.Add(layer);
+                }
+                return loaded;
             }
             catch { UnityEngine.Object.Destroy(root); gltf.Dispose(); throw; }
         }
