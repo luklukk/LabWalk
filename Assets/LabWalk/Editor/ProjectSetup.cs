@@ -32,8 +32,8 @@ namespace LabWalk.Editor
             PlayerSettings.companyName="Architecture Lab";
             PlayerSettings.productName="Lab Walk";
             PlayerSettings.SetApplicationIdentifier(NamedBuildTarget.Android,"com.architecturelab.labwalk");
-            PlayerSettings.bundleVersion="0.4.0";
-            PlayerSettings.Android.bundleVersionCode=5; // Must increase for every release installed over a previous one.
+            PlayerSettings.bundleVersion="0.5.0";
+            PlayerSettings.Android.bundleVersionCode=6; // Must increase for every release installed over a previous one.
             PlayerSettings.SetScriptingBackend(NamedBuildTarget.Android,ScriptingImplementation.IL2CPP);
             PlayerSettings.SetApiCompatibilityLevel(NamedBuildTarget.Android,ApiCompatibilityLevel.NET_Standard);
             PlayerSettings.Android.targetArchitectures=AndroidArchitecture.ARM64;

@@ -81,3 +81,19 @@ https://github.com/luklukk/LabWalk/releases/tag/v0.3.0, release build (`LabWalk.
 | Checked | apksigner v2; not debuggable; no Meta XR Operator components; `USE_SCENE` present; `libmrutilitykitshared.so` and `librhino3dm_native.so` packaged; anonymous download matched SHA-256 |
 
 0.2.1 (version code 3) was built but never published; its changes are included here.
+
+## Release v0.5.0 (2026-09-28, not yet installed on a Quest)
+
+Release build of the commit that sets version 0.5.0. Includes the unpublished 0.4.0 work (controller models and tooltips) plus switchable layers and wireframe.
+
+| Property | Value |
+|---|---|
+| Permanent link (newest release) | https://github.com/luklukk/LabWalk/releases/latest/download/LabWalk-Quest3S.apk |
+| This release | https://github.com/luklukk/LabWalk/releases/download/v0.5.0/LabWalk-Quest3S.apk |
+| Size | 102,047,525 bytes |
+| SHA-256 | `adf72d6a5949cb6ea7d3d2fa6431ff59436a6d9d7ee3f23dd62fd2fddd627f19` |
+| MD5 | `e7f107bcf20a08685455235fc41bf04b` |
+| Version | 0.5.0, version code 6 |
+| Checked | apksigner v2; not debuggable; no Meta XR Operator components; picker, Rhino and MRUK libraries packaged |
+
+From v0.5.0 every release names its APK `LabWalk-Quest3S.apk` so the permanent link keeps working. Device Manager does not re-check links by itself; redeploy after each release. Each release must raise the version code.
