@@ -72,6 +72,7 @@ namespace LabWalk
         // Called every frame after tracking updates.
         public void Update(bool visible)
         {
+            UpdateModels();
             foreach(var tip in tips)
             {
                 var anchor=tip.Left ? leftAnchor : rightAnchor;
@@ -98,13 +99,46 @@ namespace LabWalk
         }
 
         // The helper activates one model per controller type; find the button bone on the active one.
+        // Button bones come from Meta's bundled models. When the system model is shown instead, the bundled
+        // model is hidden but its Touch Plus bones still follow the controller, so labels keep their places.
         static bool FindNode(Tip tip,Transform anchor)
         {
-            if(tip.Node && tip.Node.gameObject.activeInHierarchy) return true;
+            if(tip.Node && tip.Node.IsChildOf(anchor)) return true;
             tip.Node=null;
-            foreach(var t in anchor.GetComponentsInChildren<Transform>(false))
-                if(t.name.EndsWith(tip.NodeSuffix,System.StringComparison.Ordinal)) { tip.Node=t; break; }
+            Transform fallback=null;
+            foreach(var t in anchor.GetComponentsInChildren<Transform>(true))
+            {
+                if(!t.name.EndsWith(tip.NodeSuffix,System.StringComparison.Ordinal)) continue;
+                if(t.gameObject.activeInHierarchy) { tip.Node=t; break; }
+                if(!fallback || (!IsTouchPlus(fallback) && IsTouchPlus(t))) fallback=t;
+            }
+            tip.Node=tip.Node ? tip.Node : fallback;
             return tip.Node;
+        }
+
+        static bool IsTouchPlus(Transform t)
+        {
+            for(var p=t; p; p=p.parent) if(p.name.Contains("TouchPlus")) return true;
+            return false;
+        }
+
+        // Prefer the system's controller model (OVRRuntimeController, loaded from Horizon OS) over the bundled one.
+        readonly Dictionary<Transform,bool> usingSystemModel=new Dictionary<Transform,bool>();
+        public void UpdateModels()
+        {
+            foreach(var anchor in new[]{leftAnchor,rightAnchor})
+            {
+                if(!anchor) continue;
+                var runtime=anchor.GetComponentInChildren<OVRRuntimeController>(true);
+                var bundled=anchor.GetComponentInChildren<OVRControllerHelper>(true);
+                var loaded=runtime && runtime.GetComponentsInChildren<Renderer>(false).Length>0;
+                if(bundled && bundled.gameObject.activeSelf==loaded) bundled.gameObject.SetActive(!loaded);
+                if(!usingSystemModel.TryGetValue(anchor,out var was) || was!=loaded)
+                {
+                    usingSystemModel[anchor]=loaded;
+                    DiagnosticsLog.Write($"{anchor.name}: {(loaded ? "system controller model" : "bundled controller model")}");
+                }
+            }
         }
     }
 }

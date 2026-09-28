@@ -10,6 +10,7 @@ namespace LabWalk.Editor
     public static class ControllerSetup
     {
         const string PrefabPath="Packages/com.meta.xr.sdk.core/Prefabs/OVRControllerPrefab.prefab";
+        const string RuntimePrefabPath="Packages/com.meta.xr.sdk.core/Prefabs/OVRRuntimeControllerPrefab.prefab";
 
         // Adds one controller prefab under each controller anchor of the scene's OVRCameraRig (idempotent) and saves the scene.
         [MenuItem("Lab Walk/7. Add controller models")]
@@ -29,10 +30,51 @@ namespace LabWalk.Editor
                 helper.m_controller=controller;
                 EditorUtility.SetDirty(helper);
             }
+            // The system's own controller model (XR_FB_render_model), which matches the physical controller as
+            // shown in Horizon OS. Lab Walk hides the bundled model above once this one has loaded.
+            var runtimePrefab=AssetDatabase.LoadAssetAtPath<GameObject>(RuntimePrefabPath);
+            var shader=Shader.Find("Meta/Lit") ?? Shader.Find("Unlit/Texture");
+            if(runtimePrefab)
+                foreach(var (anchor,controller) in new[]{(rig.leftControllerAnchor,OVRInput.Controller.LTouch),(rig.rightControllerAnchor,OVRInput.Controller.RTouch)})
+                {
+                    var existing=anchor.GetComponentInChildren<OVRRuntimeController>(true);
+                    if(!existing)
+                    {
+                        var instance=(GameObject)PrefabUtility.InstantiatePrefab(runtimePrefab,anchor);
+                        instance.name=controller==OVRInput.Controller.LTouch ? "Left system controller model" : "Right system controller model";
+                        instance.transform.localPosition=Vector3.zero; instance.transform.localRotation=Quaternion.identity; instance.transform.localScale=Vector3.one;
+                        existing=instance.GetComponent<OVRRuntimeController>();
+                    }
+                    existing.m_controller=controller;
+                    existing.m_controllerModelShader=shader; // referenced here so the shader is included in builds
+                    EditorUtility.SetDirty(existing);
+                }
             var scene=UnityEngine.SceneManagement.SceneManager.GetActiveScene();
             UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(scene);
             UnityEditor.SceneManagement.EditorSceneManager.SaveScene(scene);
             Debug.Log("Controller models added under "+rig.name);
+        }
+
+        // Writes the rendered size of each controller model in the prefab (meters, relative to the prefab root).
+        public static void MeasureModels()
+        {
+            var prefab=AssetDatabase.LoadAssetAtPath<GameObject>(PrefabPath);
+            var instance=(GameObject)Object.Instantiate(prefab);
+            var text=new StringBuilder();
+            try
+            {
+                foreach(Transform model in instance.transform)
+                {
+                    model.gameObject.SetActive(true);
+                    var renderers=model.GetComponentsInChildren<Renderer>(true);
+                    if(renderers.Length==0) continue;
+                    var b=renderers[0].bounds; foreach(var r in renderers) b.Encapsulate(r.bounds);
+                    text.AppendLine($"{model.name}: size {b.size.x*100:F1} x {b.size.y*100:F1} x {b.size.z*100:F1} cm, center {b.center*100:F1} cm, lossyScale {model.lossyScale}");
+                }
+            }
+            finally { Object.DestroyImmediate(instance); }
+            Directory.CreateDirectory("TestResults");
+            File.WriteAllText("TestResults/controller-sizes.txt",text.ToString());
         }
 
         // Writes every node of the controller prefab with its position relative to the prefab root.

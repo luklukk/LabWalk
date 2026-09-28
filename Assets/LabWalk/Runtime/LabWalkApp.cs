@@ -137,7 +137,7 @@ namespace LabWalk
                 placement.SetParent(activeAnchor.transform,false);
                 placement.localPosition=saved.localPosition; placement.localRotation=saved.localRotation;
                 placement.localScale=Vector3.one;
-                phase=Phase.Pinned; anchorStatus="Restored; verify against physical landmarks"; DiagnosticsLog.Write($"Placement restored from anchor {saved.anchorUuid}: {DiagnosticsLog.Pose(placement)}");
+                phase=Phase.Pinned; anchorStatus="Restored; verify against physical landmarks"; ReleaseSessionAnchor(); DiagnosticsLog.Write($"Placement restored from anchor {saved.anchorUuid}: {DiagnosticsLog.Pose(placement)}");
                 message="Placement restored. Check alignment in passthrough before X for VR.";
             }
             catch(OperationCanceledException) { }
@@ -150,6 +150,7 @@ namespace LabWalk
             if(model==null) return;
             view.SetImmersive(false);
             placement.SetParent(null,true);
+            ReleaseSessionAnchor();
             // Keep the old anchor until a replacement and its metadata have both been saved.
             phase=Phase.Origin; showModel=false; firstMeasure=false; view.ClearMeasurement();
             anchorStatus="Aligning; previous saved placement retained";
@@ -171,6 +172,7 @@ namespace LabWalk
                     placement.SetPositionAndRotation(ModelManifest.ToVector(alignment.Translation),Quaternion.Euler(0,(float)(alignment.YawRadians*180/Math.PI),0));
                     placement.localScale=Vector3.one;
                     phase=Phase.Adjust; showModel=true; markerPlaced=false;
+                    AnchorPlacementForSession();
                     DiagnosticsLog.Write($"Aligned: model baseline {alignment.ModelBaselineMeters:F3} m, room {alignment.PhysicalBaselineMeters:F3} m; {DiagnosticsLog.Pose(placement)}");
                     message=alignment.RelativeBaselineError>0.05 ? "Reference lengths differ >5%. Check units/points before saving." : "Fine tune with sticks. A saves placement; X enters VR without saving; B starts alignment again.";
                 }
@@ -199,7 +201,7 @@ namespace LabWalk
                 };
                 store.Write(saved);
                 activeAnchor=candidate; candidate=null;
-                phase=Phase.Pinned; anchorStatus="Saved locally"; DiagnosticsLog.Write($"Placement saved to anchor {saved.anchorUuid}: {DiagnosticsLog.Pose(placement)}");
+                phase=Phase.Pinned; anchorStatus="Saved locally"; ReleaseSessionAnchor(); DiagnosticsLog.Write($"Placement saved to anchor {saved.anchorUuid}: {DiagnosticsLog.Pose(placement)}");
                 message="Verify physical landmarks, then X to enter VR. B realigns.";
                 if(previous) Destroy(previous.gameObject);
                 if(prior!=null && prior.anchorUuid!=saved.anchorUuid)
@@ -461,6 +463,7 @@ namespace LabWalk
         {
             if(view==null || eye==null) return;
             TrackRecenter();
+            UpdateBoundary();
             averageFrameTime=Mathf.Lerp(averageFrameTime,Time.unscaledDeltaTime,0.04f);
             trackingHealthy=editorPreview || (OVRManager.isHmdPresent && OVRManager.hasInputFocus &&
                 OVRManager.tracker != null && OVRManager.tracker.isPositionTracked);
@@ -573,6 +576,57 @@ namespace LabWalk
             }
         }
 
+        // ---- Session anchor: world-locks an aligned but unsaved placement ----
+        // Without a boundary the tracking origin (stage space) is not stable, so content must follow an anchor
+        // from the moment it is placed, not only after it is saved (Meta boundaryless guidance).
+        OVRSpatialAnchor sessionAnchor;
+        int sessionAnchorRequest;
+
+        async void AnchorPlacementForSession()
+        {
+            if(editorPreview) return;
+            var request=++sessionAnchorRequest;
+            try
+            {
+                var anchor=await anchors.CreateAsync(new Pose(placement.position,placement.rotation),"Session anchor (unsaved)",lifetime.Token);
+                if(!this || request!=sessionAnchorRequest || phase!=Phase.Adjust || placement.parent)
+                { if(anchor) Destroy(anchor.gameObject); return; }
+                ReleaseSessionAnchor();
+                sessionAnchor=anchor;
+                placement.SetParent(anchor.transform,true);
+                DiagnosticsLog.Write("Placement attached to a session anchor (unsaved)");
+            }
+            catch(OperationCanceledException) { }
+            catch(Exception e) { DiagnosticsLog.Write("Session anchor failed: "+e.Message); }
+        }
+
+        void ReleaseSessionAnchor()
+        {
+            sessionAnchorRequest++;
+            if(!sessionAnchor) return;
+            if(placement.parent==sessionAnchor.transform) placement.SetParent(null,true);
+            Destroy(sessionAnchor.gameObject); // never saved, so nothing persists
+            sessionAnchor=null;
+        }
+
+        // ---- Boundary: suppressed while passthrough is visible (walking between rooms); back in full VR ----
+        bool boundaryHooked;
+        void UpdateBoundary()
+        {
+            if(editorPreview || !OVRManager.instance) return;
+            if(!boundaryHooked)
+            {
+                boundaryHooked=true;
+                OVRManager.BoundaryVisibilityChanged+=visibility=>DiagnosticsLog.Write("System boundary visibility: "+visibility);
+            }
+            var suppress=!view.Immersive;
+            if(OVRManager.instance.shouldBoundaryVisibilityBeSuppressed!=suppress)
+            {
+                OVRManager.instance.shouldBoundaryVisibilityBeSuppressed=suppress;
+                DiagnosticsLog.Write(suppress ? "Requesting no boundary (passthrough visible)" : "Requesting boundary (full VR)");
+            }
+        }
+
         // ---- QR marker calibration ----
 
         float markerWarnTime;
@@ -606,10 +660,12 @@ namespace LabWalk
         {
             var fit=markers.Solution;
             var wasPinned=phase==Phase.Pinned;
-            if(placement.parent) placement.SetParent(null,true); // keep the saved anchor until a new placement is saved
+            // Detach from a saved anchor (kept until a new placement is saved); a session anchor can stay.
+            if(placement.parent && (!sessionAnchor || placement.parent!=sessionAnchor.transform)) placement.SetParent(null,true);
             placement.SetPositionAndRotation(ModelManifest.ToVector(fit.Translation),Quaternion.Euler(0,(float)(fit.YawRadians*180/Math.PI),0));
             placement.localScale=Vector3.one;
             alignment=fit; phase=Phase.Adjust; showModel=true; markerPlaced=true; userAdjusted=false;
+            if(!placement.parent) AnchorPlacementForSession();
             if(wasPinned) anchorStatus="Re-snapped; previous saved placement retained until A";
             var warning=fit.MaxResidualMeters>0.05 ? $" Markers disagree by up to {fit.MaxResidualMeters*100:F0} cm: check their measured positions." :
                 fit.RelativeBaselineError>0.05 ? " Marker spacing differs >5% from the model: check units and measurements." : "";

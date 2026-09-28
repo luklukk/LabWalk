@@ -19,5 +19,7 @@
   <!-- Spatial data: required by Horizon OS QR code tracking (marker calibration). -->
   <uses-permission android:name="com.oculus.permission.USE_SCENE" />
   <uses-feature android:name="com.oculus.feature.PASSTHROUGH" android:required="true" />
+  <!-- No boundary needed while passthrough is visible (walking between rooms); the app requests boundary suppression only then. -->
+  <uses-feature android:name="com.oculus.feature.BOUNDARYLESS_APP" android:required="true" />
   <horizonos:uses-horizonos-sdk horizonos:minSdkVersion="65" horizonos:targetSdkVersion="205" />
 </manifest>

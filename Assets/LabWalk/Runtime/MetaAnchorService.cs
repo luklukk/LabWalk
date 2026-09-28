@@ -8,9 +8,10 @@ namespace LabWalk
 {
     public sealed class MetaAnchorService
     {
-        public async Task<OVRSpatialAnchor> CreateAndSaveAsync(Pose pose, CancellationToken token)
+        // An unsaved anchor: world-locks content for this session only (e.g. an aligned but unsaved placement).
+        public async Task<OVRSpatialAnchor> CreateAsync(Pose pose, string name, CancellationToken token)
         {
-            var go=new GameObject("Lab spatial anchor");
+            var go=new GameObject(name);
             go.transform.SetPositionAndRotation(pose.position,pose.rotation);
             var anchor=go.AddComponent<OVRSpatialAnchor>();
             try
@@ -23,6 +24,17 @@ namespace LabWalk
                     await Task.Yield();
                 }
                 if(!anchor) throw new InvalidOperationException("The headset could not create an anchor.");
+                return anchor;
+            }
+            catch { if(go) UnityEngine.Object.Destroy(go); throw; }
+        }
+
+        public async Task<OVRSpatialAnchor> CreateAndSaveAsync(Pose pose, CancellationToken token)
+        {
+            var anchor=await CreateAsync(pose,"Lab spatial anchor",token);
+            var go=anchor.gameObject;
+            try
+            {
                 token.ThrowIfCancellationRequested();
                 var saved=await anchor.SaveAnchorAsync();
                 if(!saved.Success) throw new InvalidOperationException("Anchor save failed: "+saved.Status);
