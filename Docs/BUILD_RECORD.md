@@ -97,3 +97,17 @@ Release build of the commit that sets version 0.5.0. Includes the unpublished 0.
 | Checked | apksigner v2; not debuggable; no Meta XR Operator components; picker, Rhino and MRUK libraries packaged |
 
 From v0.5.0 every release names its APK `LabWalk-Quest3S.apk` so the permanent link keeps working. Device Manager does not re-check links by itself; redeploy after each release. Each release must raise the version code.
+
+## Release v0.5.1 (2026-09-28, not yet installed on a Quest)
+
+Release build of commit `8030ee3`: QR payload fix and diagnostics log, system controller models, boundaryless passthrough with session anchors, controller pointer at any angle.
+
+| Property | Value |
+|---|---|
+| Permanent link (newest release) | https://github.com/luklukk/LabWalk/releases/latest/download/LabWalk-Quest3S.apk |
+| This release | https://github.com/luklukk/LabWalk/releases/download/v0.5.1/LabWalk-Quest3S.apk |
+| Size | 102,055,461 bytes |
+| SHA-256 | `c22345d0c78f20dd3c8f5825f3e9763b241a0b7c22696e2fabeee89acd95c3db` |
+| MD5 | `e532211dcdcb0a09f2f6d51252144974` |
+| Version | 0.5.1, version code 7 |
+| Checked | apksigner v2, same certificate as 0.5.0; not debuggable; no Meta XR Operator components; `BOUNDARYLESS_APP` and `RENDER_MODEL` features; `USE_SCENE`, `USE_ANCHOR_API`, `RENDER_MODEL`, `BOUNDARY_VISIBILITY` permissions |
