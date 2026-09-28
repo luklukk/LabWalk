@@ -21,12 +21,18 @@ The app asks for the **spatial data** permission (`com.oculus.permission.USE_SCE
 
 ## Printing
 
-Print `Docs/Markers/LabWalk-markers.html` from a browser at **100% / actual size**. The black square must measure **15 cm**; each page has a 10 cm check bar. Matte paper is best. Regenerate or add codes with:
+Print the **PDFs** in `Docs/Markers`: `LabWalk-markers.pdf` has all three codes, and `LabWalk-marker-LW1.pdf` (and LW2, LW3) has one each. Browsers often rescale HTML pages, so use the PDFs for printing.
+
+- Print at **Actual size / 100%**, never "Fit to page" or "Shrink". The PDFs ask viewers to print at actual size, but check the print dialog.
+- The black square must measure **15.0 cm**. Each page has a **10 cm** bar to check with a ruler.
+- US Letter paper (the code and its white margin also fit on A4). Matte paper is best.
+- Checked by rendering the PDFs with PDFium at 300 DPI: every page decodes to its ID, and the code measures 15.00 × 15.00 cm with 3.3 cm of white paper at the sides.
+
+Regenerate or add codes with:
 
 ```
-dotnet run --project Tools/MarkerSheet -- Docs/Markers/LabWalk-markers.html LW1 LW2 LW3
+dotnet run --project Tools/MarkerSheet -- Docs/Markers LW1 LW2 LW3
 ```
-
 ## Placing the codes in the Digital Tools room (LL106, northwest)
 
 In the model this room runs from the exterior **west wall** (inside face x = 0) to two angled east walls, between the **south wall** (inside face y ≈ 33.04 ft) and the **north window wall** (inside face y = 57.35 ft). Put codes on the three straight walls, so each position is two tape measurements:
