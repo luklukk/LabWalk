@@ -88,8 +88,31 @@ namespace LabWalk
             panel.position=head.TransformPoint(new Vector3(-0.46f,0.35f,1.2f));
             panel.rotation=head.rotation;
         }
-        public void Pointer(Vector3 origin,Vector3 end,bool visible)
-        { pointer.enabled=visible; pointer.SetPosition(0,origin); pointer.SetPosition(1,end); }
+        // The controller ray is always shown while the controller is tracked. On the floor it runs to the hit point
+        // and draws a ring there (the trigger records that point); otherwise it is a short ray that fades out.
+        LineRenderer floorRing;
+        public void Pointer(Vector3 origin,Vector3 end,bool visible,bool onFloor)
+        {
+            pointer.enabled=visible;
+            if(!floorRing)
+            {
+                floorRing=Line("Floor pointer ring",Color.cyan,0.004f);
+                floorRing.positionCount=32; floorRing.loop=true;
+            }
+            floorRing.enabled=visible && onFloor;
+            if(!visible) return;
+            pointer.SetPosition(0,origin); pointer.SetPosition(1,end);
+            pointer.startColor=Color.cyan;
+            pointer.endColor=onFloor ? Color.cyan : new Color(0,1,1,0);
+            if(!onFloor) return;
+            // Ring radius grows with distance so it stays visible far away.
+            var radius=Mathf.Clamp(Vector3.Distance(origin,end)*0.012f,0.02f,0.15f);
+            for(int i=0;i<32;i++)
+            {
+                var a=i*Mathf.PI*2/32;
+                floorRing.SetPosition(i,end+new Vector3(Mathf.Cos(a)*radius,0.005f,Mathf.Sin(a)*radius));
+            }
+        }
         public void Reference(Vector3 a,Vector3 b,bool visible)
         { reference.enabled=visible; reference.SetPosition(0,a+Vector3.up*0.015f); reference.SetPosition(1,b+Vector3.up*0.015f); }
         public void Measurement(Vector3 a,Vector3 b)

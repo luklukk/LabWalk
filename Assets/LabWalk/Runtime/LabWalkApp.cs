@@ -479,9 +479,10 @@ namespace LabWalk
                 : new Ray(rig.rightControllerAnchor.position,rig.rightControllerAnchor.forward);
             var controllerTracked=editorPreview || OVRInput.GetControllerPositionTracked(OVRInput.Controller.RTouch);
             var floor=new Plane(Vector3.up,Vector3.zero);
-            var hit=floor.Raycast(ray,out var distance) && distance>0 && distance<10 && ray.direction.y < -0.08f && controllerTracked;
-            var point=ray.GetPoint(hit ? distance : 1);
-            view.Pointer(ray.origin,point,hit && !view.Immersive && trackingHealthy);
+            // Floor hits count out to 20 m; past that (or pointing level/up) the ray is shown as a short fading beam.
+            var hit=floor.Raycast(ray,out var distance) && distance>0 && distance<20 && ray.direction.y < -0.02f && controllerTracked;
+            var point=ray.GetPoint(hit ? distance : 2);
+            view.Pointer(ray.origin,point,controllerTracked && !view.Immersive && trackingHealthy,hit);
             // The Models menu and import review take all input while open; they work without a model
             // (e.g. after a load error) and without tracking, since they only show the panel.
             var modelUi=menuOpen || phase==Phase.Importing || phase==Phase.Review;
