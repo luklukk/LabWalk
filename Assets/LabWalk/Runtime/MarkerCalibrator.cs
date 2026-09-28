@@ -85,10 +85,11 @@ namespace LabWalk
 
             foreach(var t in tracks.Values) t.Tracked=false;
             mruk.GetTrackables(trackables);
+            LogTrackerState();
             foreach(var trackable in trackables)
             {
                 if(!trackable || trackable.TrackableType!=OVRAnchor.TrackableType.QRCode || !trackable.IsTracked) continue;
-                var id=trackable.MarkerPayloadString?.Trim();
+                var id=PayloadText(trackable);
                 if(string.IsNullOrEmpty(id) || !markers.Any(m=>m.id==id)) continue;
                 if(!tracks.TryGetValue(id,out var track)) { tracks[id]=track=new Track(); DiagnosticsLog.Write("QR marker detected: "+id); }
                 var center=trackable.PlaneRect.HasValue ? trackable.transform.TransformPoint(trackable.PlaneRect.Value.center) : trackable.transform.position;
@@ -103,6 +104,32 @@ namespace LabWalk
             }
             Solve();
             Status=Describe();
+        }
+
+        // MRUK only fills MarkerPayloadString when the runtime reports a "string" QR payload; otherwise the
+        // text is only in MarkerPayloadBytes. Our codes hold plain ASCII IDs, so read either.
+        static string PayloadText(MRUKTrackable trackable)
+        {
+            var text=trackable.MarkerPayloadString;
+            if(string.IsNullOrEmpty(text) && trackable.MarkerPayloadBytes!=null && trackable.MarkerPayloadBytes.Length>0)
+                text=Encoding.UTF8.GetString(trackable.MarkerPayloadBytes).TrimEnd('\0');
+            return text?.Trim();
+        }
+
+        // Diagnostics for headset tests: tracker state and every trackable MRUK reports, logged when it changes.
+        string lastTrackerState;
+        public string TrackerSummary { get; private set; }="";
+        void LogTrackerState()
+        {
+            var qr=trackables.Where(t=>t && t.TrackableType==OVRAnchor.TrackableType.QRCode).ToList();
+            var active=mruk.TrackerConfiguration.QRCodeTrackingEnabled;
+            TrackerSummary=$"QR tracker {(active ? "on" : "starting")}, {qr.Count(t=>t.IsTracked)}/{qr.Count} codes tracked"+
+                (qr.Count>0 ? ": "+string.Join(", ",qr.Select(t=>PayloadText(t) ?? "?")) : "");
+            var state=$"requested={mruk.SceneSettings.TrackerConfiguration.QRCodeTrackingEnabled} active={active} trackables={trackables.Count} | "+
+                string.Join("; ",trackables.Where(t=>t).Select(t=>$"{t.TrackableType} tracked={t.IsTracked} text='{t.MarkerPayloadString}' bytes={(t.MarkerPayloadBytes==null ? "none" : System.BitConverter.ToString(t.MarkerPayloadBytes))} at {t.transform.position:F2}"));
+            if(state==lastTrackerState) return;
+            lastTrackerState=state;
+            DiagnosticsLog.Write("MRUK trackers: "+state);
         }
 
         void Solve()
@@ -148,7 +175,8 @@ namespace LabWalk
                 else text.Append(m.id).Append(t.Steady ? " ok" : t.Tracked ? $" {t.Samples.Count}/{MinSamples}" : " lost").Append(t.Samples.Count>=2 ? $" ±{t.Spread*100:F1}cm  " : "  ");
             }
             if(HasSolution) text.Append($"| fit {Solution.RmsResidualMeters*100:F1} cm rms");
-            else text.Append("| look at 2+ codes");
+            else text.Append("| look at 2+ codes from about 1 m");
+            text.Append('\n').Append(TrackerSummary);
             return text.ToString();
         }
     }
