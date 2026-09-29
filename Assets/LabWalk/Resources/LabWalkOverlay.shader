@@ -1,7 +1,8 @@
 Shader "LabWalk/Overlay"
 {
     // Flat color drawn on top of everything (menu panel backgrounds and buttons), so model geometry closer than
-    // the panel never hides it. The render queue orders overlay parts among themselves.
+    // the panel never hides it. Alpha blends (the vellum panels are slightly see-through). The render queue
+    // orders overlay parts among themselves.
     Properties { _Color ("Color", Color) = (1,1,1,1) }
     SubShader
     {
@@ -9,6 +10,7 @@ Shader "LabWalk/Overlay"
         Pass
         {
             ZTest Always ZWrite Off Cull Off
+            Blend SrcAlpha OneMinusSrcAlpha
             CGPROGRAM
             #pragma vertex vert
             #pragma fragment frag

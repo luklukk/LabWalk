@@ -35,7 +35,7 @@ namespace LabWalk
         const float Width=0.70f, RowHeight=0.056f, TitleHeight=0.105f, FooterHeight=0.05f, Margin=0.022f;
         const float LabelTextHeight=0.026f, ButtonTextHeight=0.021f, ButtonHeight=0.042f;
         const int MaxRows=9, FontSize=UiStyle.FontSize;
-        static readonly Color Background=UiStyle.Ink, RowFocus=UiStyle.InkRaised, FocusOutline=UiStyle.Pointer;
+        static readonly Color Background=UiStyle.Ink, RowFocus=UiStyle.InkRaised, FocusOutline=UiStyle.Focus;
 
         readonly Transform root;
         readonly Font font;
@@ -214,10 +214,10 @@ namespace LabWalk
         {
             switch(style)
             {
-                case Style.Solid: return (UiStyle.Paper,UiStyle.Ink);
-                case Style.Wire: return (UiStyle.Accent,new Color(0.08f,0.04f,0f));
-                case Style.Off: return (new Color(0.34f,0.36f,0.39f),UiStyle.Paper);
-                case Style.Action: return (new Color(0.17f,0.33f,0.45f),UiStyle.Paper);
+                case Style.Solid: return (UiStyle.Paper,new Color(0.97f,0.96f,0.93f));      // selected: dark ink chip
+                case Style.Wire: return (Rhino3dmModelLoader.WireColor,new Color(0.08f,0.04f,0f));
+                case Style.Off: return (new Color(0.45f,0.48f,0.52f),Color.white);
+                case Style.Action: return (new Color(0.17f,0.33f,0.45f),Color.white);
                 default: return (UiStyle.InkRaised,UiStyle.Muted);
             }
         }

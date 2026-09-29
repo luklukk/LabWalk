@@ -5,18 +5,19 @@ using UnityEngine.Rendering;
 
 namespace LabWalk
 {
-    // One visual language for every panel, label and marker: a drawing sheet. Ink-dark panels with a thin border,
-    // warm paper-white text, spaced capitals for titles, rules with 45° ticks like dimension lines, and the
-    // same orange as the wireframes as the accent. Panels and labels draw on top of the model (overlay).
+    // One visual language for every panel, label and marker: a drawing on vellum. Translucent off-white panels
+    // with a thin graphite border, dark ink text, spaced capitals for titles, rules with 45° ticks like dimension
+    // lines, and the wireframe orange as the accent. Panels and labels draw on top of the model (overlay).
     public static class UiStyle
     {
-        public static readonly Color Ink=new Color(0.035f,0.045f,0.058f);          // panel fill
-        public static readonly Color InkRaised=new Color(0.075f,0.095f,0.12f);     // focused row, inactive buttons
-        public static readonly Color Rule=new Color(0.46f,0.52f,0.58f);           // borders and rules
-        public static readonly Color Paper=new Color(0.95f,0.93f,0.88f);          // main text
-        public static readonly Color Muted=new Color(0.64f,0.67f,0.70f);          // secondary text
-        public static readonly Color Accent=Rhino3dmModelLoader.WireColor;         // brand, wireframes, tags
+        public static readonly Color Ink=new Color(0.95f,0.945f,0.915f,0.9f);     // panel fill: vellum, slightly see-through
+        public static readonly Color InkRaised=new Color(0.84f,0.845f,0.82f,0.95f); // focused row, inactive buttons
+        public static readonly Color Rule=new Color(0.38f,0.42f,0.47f);           // borders and rules (graphite)
+        public static readonly Color Paper=new Color(0.1f,0.12f,0.15f);           // main text (ink)
+        public static readonly Color Muted=new Color(0.38f,0.41f,0.45f);          // secondary text
+        public static readonly Color Accent=new Color(0.9f,0.44f,0.04f);          // brand, tags, expected-marker crosses
         public static readonly Color Pointer=new Color(0.35f,0.85f,1f);           // controller ray, seen markers
+        public static readonly Color Focus=new Color(0.1f,0.45f,0.78f);           // menu focus outline
         public const int FontSize=64;
 
         static Font font;
