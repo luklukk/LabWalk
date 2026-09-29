@@ -73,7 +73,36 @@ namespace LabWalk
                 TrackerConfiguration=new OVRAnchor.TrackerConfiguration {QRCodeTrackingEnabled=true}
             };
             go.SetActive(true);
-            DiagnosticsLog.Write($"QR tracking requested for markers {string.Join(", ",markers.Select(m=>m.id))}");
+            Application.logMessageReceived+=OnLog;
+            DiagnosticsLog.Write($"QR tracking requested for markers {string.Join(", ",markers.Select(m=>m.id))}; "+
+                $"supported={mruk.QRCodeTrackingSupported}, scene permission={Permission.HasUserAuthorizedPermission(OVRPermissionsRequester.ScenePermission)}, OS {SystemInfo.operatingSystem}");
+        }
+
+        // MRUK asks the headset to start QR tracking only once per enable: if that request fails or never
+        // completes (e.g. made at launch before the session is ready), tracking stays off for the whole session.
+        // Toggling the component resets MRUK's request state (MRUK.OnDisable), so it asks again.
+        float inactiveSince=-1;
+        int restarts;
+        string configureResult="waiting";
+        void RetryTrackerIfOff()
+        {
+            if(mruk.TrackerConfiguration.QRCodeTrackingEnabled) { inactiveSince=-1; return; }
+            var now=Time.realtimeSinceStartup;
+            if(inactiveSince<0) { inactiveSince=now; return; }
+            if(now-inactiveSince<Mathf.Min(5+5*restarts,30)) return;
+            restarts++;
+            DiagnosticsLog.Write($"QR tracker still off (last result: {configureResult}); restarting MRUK trackers, attempt {restarts}");
+            mruk.enabled=false; mruk.enabled=true;
+            inactiveSince=now;
+        }
+
+        // MRUK reports the result of each tracker request only as a log message.
+        void OnLog(string message,string stackTrace,LogType type)
+        {
+            if(message==null) return;
+            if(message.StartsWith("Configured anchor trackers")) configureResult="ok";
+            else if(message.Contains("Unable to fully satisfy requested tracker configuration")) configureResult="failed ("+message.Split(':')[0]+")";
+            else if(message.StartsWith("Error while setting trackable configuration")) configureResult="error";
         }
 
         public void Update()
@@ -82,6 +111,7 @@ namespace LabWalk
             if(!Permission.HasUserAuthorizedPermission(OVRPermissionsRequester.ScenePermission))
             { Status="Markers: allow spatial data access in the permission prompt or headset settings"; return; }
             if(!mruk.QRCodeTrackingSupported) { Status="Markers: QR tracking not supported (needs Horizon OS v78+)"; return; }
+            RetryTrackerIfOff();
 
             foreach(var t in tracks.Values) t.Tracked=false;
             mruk.GetTrackables(trackables);
@@ -123,7 +153,7 @@ namespace LabWalk
         {
             var qr=trackables.Where(t=>t && t.TrackableType==OVRAnchor.TrackableType.QRCode).ToList();
             var active=mruk.TrackerConfiguration.QRCodeTrackingEnabled;
-            TrackerSummary=$"QR tracker {(active ? "on" : "starting")}, {qr.Count(t=>t.IsTracked)}/{qr.Count} codes tracked"+
+            TrackerSummary=$"QR tracker {(active ? "on" : $"off: {configureResult}{(restarts>0 ? $", retry {restarts}" : "")}")}, {qr.Count(t=>t.IsTracked)}/{qr.Count} codes tracked"+
                 (qr.Count>0 ? ": "+string.Join(", ",qr.Select(t=>PayloadText(t) ?? "?")) : "");
             var state=$"requested={mruk.SceneSettings.TrackerConfiguration.QRCodeTrackingEnabled} active={active} trackables={trackables.Count} | "+
                 string.Join("; ",trackables.Where(t=>t).Select(t=>$"{t.TrackableType} tracked={t.IsTracked} text='{t.MarkerPayloadString}' bytes={(t.MarkerPayloadBytes==null ? "none" : System.BitConverter.ToString(t.MarkerPayloadBytes))} at {t.transform.position:F2}"));
