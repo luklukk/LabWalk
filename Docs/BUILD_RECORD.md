@@ -127,7 +127,7 @@ Release build of commit `0f7d4ac`: retries MRUK's QR tracker start while it is o
 
 Correction to the v0.5.0 note: Meta documents that self-hosted APKs are not updated from a link Device Manager already knows. Give Device Manager each release's own link (`/releases/download/vX.Y.Z/LabWalk-Quest3S.apk`); the permanent link is for sideloading.
 
-## Release v0.6.0 (2026-09-29, not yet installed on a Quest)
+## Release v0.6.0 (2026-09-29, tested on the lab Quest 3S: QR markers place the model)
 
 Release build of commit `1b9e577`: QR markers read from the passthrough camera image (Passthrough Camera API, ZXing.Net 0.16.10, pose-based sampling) instead of Horizon OS QR tracking. Desktop tests: `dotnet run --project Tools/ScanTests` (synthetic camera images).
 

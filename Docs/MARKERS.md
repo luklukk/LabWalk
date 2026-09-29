@@ -1,6 +1,6 @@
 # QR marker calibration
 
-Added in 0.3.0. Since 0.6.0, Lab Walk reads the codes from the passthrough camera image itself. Before that it relied on Horizon OS's built-in QR tracking, which reported no codes on the lab headsets. **0.6.0 is not yet run on a Quest.** The decoder and 3D locator are tested on the desktop with synthetic camera images (`dotnet run --project Tools/ScanTests`).
+Added in 0.3.0. Since 0.6.0, Lab Walk reads the codes from the passthrough camera image itself. Before that it relied on Horizon OS's built-in QR tracking, which reported no codes on the lab headsets. **Confirmed working on the lab Quest 3S headsets with 0.6.0 (2026-09-29).** The decoder and 3D locator also have desktop tests with synthetic camera images (`dotnet run --project Tools/ScanTests`).
 
 ## How it works
 
