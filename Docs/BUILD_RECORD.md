@@ -126,3 +126,17 @@ Release build of commit `0f7d4ac`: retries MRUK's QR tracker start while it is o
 | Checked | apksigner v2, same certificate as 0.5.0 and 0.5.1; not debuggable |
 
 Correction to the v0.5.0 note: Meta documents that self-hosted APKs are not updated from a link Device Manager already knows. Give Device Manager each release's own link (`/releases/download/vX.Y.Z/LabWalk-Quest3S.apk`); the permanent link is for sideloading.
+
+## Release v0.6.0 (2026-09-29, not yet installed on a Quest)
+
+Release build of commit `1b9e577`: QR markers read from the passthrough camera image (Passthrough Camera API, ZXing.Net 0.16.10, pose-based sampling) instead of Horizon OS QR tracking. Desktop tests: `dotnet run --project Tools/ScanTests` (synthetic camera images).
+
+| Property | Value |
+|---|---|
+| Device Manager link (this release) | https://github.com/luklukk/LabWalk/releases/download/v0.6.0/LabWalk-Quest3S.apk |
+| Permanent link (newest release) | https://github.com/luklukk/LabWalk/releases/latest/download/LabWalk-Quest3S.apk |
+| Size | 102,688,045 bytes |
+| SHA-256 | `33da1760a562e46ef6956dc22ed9a96fd50eae607995141d7f8b90ec7dc9cd4b` |
+| MD5 | `288303e52159f52ac122ab3a200ae2e6` |
+| Version | 0.6.0, version code 9 |
+| Checked | apksigner v2, same certificate as 0.5.x; not debuggable; `HEADSET_CAMERA` permission; ZXing, `QrFrameDecoder`, `CameraMarkerScanner` and `PassthroughCameraAccess` present in IL2CPP metadata |
