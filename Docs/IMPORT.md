@@ -10,7 +10,7 @@ Added 2026-09-24. Status: implemented and checked on the desktop (edit-mode pipe
 2. In the headset press the **left grip** to open **Models**. Move with either stick, **A** opens, **B** closes. The desktop preview uses **O**, arrows, Enter and Esc.
 3. The model loads hidden, in passthrough (**B** cancels while loading). A review screen shows the name, source units, true-size dimensions, import summary and where the landmarks came from.
 4. **A** makes it the active model; **B** cancels. Nothing is saved or replaced before A.
-5. After A, the app looks for a saved placement for this exact file. If there is none, alignment starts at reference A as usual.
+5. After A, the new model is placed from the QR markers (the camera starts looking right away), or with two floor points if the file has no markers.
 
 Choose **Bundled sample room** in the same menu to return to the sample. Imported source files stay in the Import folder.
 
@@ -24,8 +24,8 @@ Without these points the app uses two floor corners of the model's bounding box 
 
 - `ModelImport.LoadFileAsync` reads the file (150 MB limit), loads it under an inactive staging object, reads the landmarks and generates `model.json` (units from the file; no hand-editing).
 - On confirm, `ModelImport.ActivateAsync` copies the file and manifest into `files/Models.incoming`, writes `model.json` last, then swaps it in as `files/Models`. The old folder is deleted only after the swap. `RecoverInterruptedSwitch` repairs an interrupted swap at startup.
-- The previous model stays active and visible to the code until the swap succeeds; a failed or cancelled import leaves it, its saved placement and its anchor untouched.
-- The fingerprint is SHA-256 of model bytes plus the generated manifest. It is identical after a restart or a re-import of the same file, so the saved anchor restores. A different file or landmarks forces realignment. The old anchor is erased only after a new placement is saved (unchanged behavior).
+- The previous model stays active and visible to the code until the swap succeeds; a failed or cancelled import leaves it and its placement untouched.
+- The fingerprint is SHA-256 of model bytes plus the generated manifest. It is identical after a restart or a re-import of the same file, so the layer choices and wireframed items are remembered.
 - If the imported selection fails to load at startup, the app loads the bundled sample and says why.
 - Peak memory during an import holds the old and new model together (the lab is roughly 620k triangles; not yet measured on device).
 

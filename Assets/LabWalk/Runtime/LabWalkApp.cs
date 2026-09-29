@@ -15,18 +15,19 @@ namespace LabWalk
     public sealed class LabWalkApp : MonoBehaviour
     {
         public OVRCameraRig rig;
-        enum Phase { Loading, Origin, Direction, Adjust, Saving, Pinned, Recovery, Error, Importing, Review }
+        // Searching: the camera looks for the QR markers. PointA/PointB: placing by two floor points (models without
+        // markers, or from Fine-tune). Placed: the model is shown and world-locked for this session.
+        enum Phase { Loading, Searching, PointA, PointB, Placed, Error, Importing, Review }
         Phase phase=Phase.Loading;
         readonly CancellationTokenSource lifetime=new CancellationTokenSource();
         readonly MetaAnchorService anchors=new MetaAnchorService();
-        PlacementStore store;
         ModelManifest manifest;
         LoadedModel model;
         Transform placement;
-        OVRSpatialAnchor activeAnchor;
         WalkthroughView view;
         Camera eye;
-        string fingerprint, message="Loading model...", anchorStatus="Not placed", measurement=DefaultMeasurement;
+        string fingerprint, message="Loading model...", measurement=DefaultMeasurement;
+        float messageTime=-100;
         const string DefaultMeasurement="";
         ControllerGuide guide;
         Vector3 realA, measuredA;
@@ -37,7 +38,7 @@ namespace LabWalk
         LayerView layerView;
         MenuPanel menu;
         readonly MarkerCalibrator markers=new MarkerCalibrator();
-        bool markerPlaced, userAdjusted;
+        bool markerPlaced, userAdjusted, tuning, hasPlacement, placedByFloorPoints;
         ModelCandidate candidate;
         CancellationTokenSource importCancel;
         bool menuOpen, waitingForPicker;
@@ -49,7 +50,6 @@ namespace LabWalk
         {
             // The simulator is a separate window: keep editor frames advancing while it has focus.
             if(Application.isEditor) Application.runInBackground=true;
-            store=new PlacementStore();
             placement=new GameObject("Model placement (rigid pose)").transform;
             try { ModelImport.RecoverInterruptedSwitch(); ModelImport.EnsureFolders(); }
             catch(Exception e) { Debug.LogWarning("Import folder setup failed: "+e.Message); }
@@ -90,16 +90,15 @@ namespace LabWalk
                 }
                 if(!this) { loaded.Dispose(); return; }
                 Adopt(loaded);
-                if(editorPreview) BeginAlignment(); else await RestoreAsync();
-                if(warning!=null) message=warning;
+                StartPlacement();
+                if(warning!=null) Notify(warning);
             }
             catch(OperationCanceledException) { }
             catch(Exception e) { if(this) { phase=Phase.Error; message=e.Message+" Left grip opens Models."; Debug.LogException(e); } }
             finally { busy=false; }
         }
 
-        // Makes a loaded candidate the active model. Placement keeps its pose; the saved anchor is
-        // only reused when the fingerprint matches (RestoreAsync), otherwise alignment starts.
+        // Makes a loaded candidate the active model; StartPlacement then places it.
         void Adopt(ModelCandidate next)
         {
             var previous=model;
@@ -118,124 +117,96 @@ namespace LabWalk
             previous?.Dispose();
         }
 
-        async Task RestoreAsync()
-        {
-            busy=true; phase=Phase.Loading; anchorStatus="Finding saved placement";
-            try
-            {
-                var saved=store.Read();
-                if(saved==null) { BeginAlignment(); return; }
-                if(saved.modelFingerprint!=fingerprint)
-                { BeginAlignment(); message="Export or settings changed. Align this version again."; return; }
-                message="Look around the original room while the anchor localizes.";
-                // Switching back to the model that owns the saved anchor can reuse the live anchor.
-                if(!(activeAnchor && activeAnchor.Uuid.ToString()==saved.anchorUuid))
-                {
-                    var restored=await anchors.RestoreAsync(saved.anchorUuid,lifetime.Token);
-                    if(!this) { Destroy(restored.gameObject); return; }
-                    var previous=activeAnchor;
-                    activeAnchor=restored;
-                    if(previous) { placement.SetParent(null,true); Destroy(previous.gameObject); }
-                }
-                placement.SetParent(activeAnchor.transform,false);
-                placement.localPosition=saved.localPosition; placement.localRotation=saved.localRotation;
-                placement.localScale=Vector3.one;
-                phase=Phase.Pinned; anchorStatus="Restored; verify against physical landmarks"; ReleaseSessionAnchor(); DiagnosticsLog.Write($"Placement restored from anchor {saved.anchorUuid}: {DiagnosticsLog.Pose(placement)}");
-                message="Placement restored. Check alignment in passthrough before X for VR.";
-            }
-            catch(OperationCanceledException) { }
-            catch(Exception e) { if(this) { phase=Phase.Recovery; anchorStatus="Restore failed"; message=e.Message; DiagnosticsLog.Write("Restore failed: "+e.Message); } }
-            finally { busy=false; }
-        }
+        // ---- Placement: automatic from the QR markers; everything else is behind "Fine-tune placement" ----
 
-        void BeginAlignment()
+        // A message shown on the status panel for a few seconds (the panel is otherwise hidden once placed).
+        void Notify(string text) { message=text; messageTime=Time.unscaledTime; }
+        bool Notifying => Time.unscaledTime-messageTime<6;
+
+        // Places the model from scratch: the camera looks for the QR markers (the model appears when 2 are found);
+        // a model without markers is placed with two floor points instead.
+        void StartPlacement()
         {
             if(model==null) return;
             view.SetImmersive(false);
-            placement.SetParent(null,true);
             ReleaseSessionAnchor();
-            // Keep the old anchor until a replacement and its metadata have both been saved.
-            phase=Phase.Origin; showModel=false; firstMeasure=false; view.ClearMeasurement();
-            anchorStatus="Aligning; previous saved placement retained";
-            message=markers.Active ? "Look at 2 or more QR markers from about 1 m, facing them; the model places itself. Or point at floor reference A and pull the right trigger."
-                : "Point at physical floor reference A; right trigger to record.";
+            placement.SetParent(null,true);
+            hasPlacement=markerPlaced=userAdjusted=placedByFloorPoints=false; tuning=false;
+            firstMeasure=false; view.ClearMeasurement(); measurement=DefaultMeasurement;
+            if(markers.Active && !editorPreview)
+            {
+                phase=Phase.Searching;
+                message="Look at the QR markers from about 1 m, facing them. The model appears when 2 are found.";
+            }
+            else
+            {
+                tuning=true; phase=Phase.PointA;
+                message=markers.Active ? "Desktop preview: place the model with two floor points (click the floor)." :
+                    "This model has no QR markers. Point at floor reference A and pull the right trigger.";
+            }
+        }
+
+        // Fine-tune (View menu): sticks nudge, B re-snaps, trigger marks floor points, grip measures, A is done.
+        void StartFineTune()
+        {
+            CloseMenu();
+            tuning=true;
+            if(!hasPlacement) { phase=Phase.PointA; message="Point at floor reference A and pull the right trigger. B cancels."; }
+            else message=markers.Active ? "Sticks move the model. B re-snaps to the QR markers. Right trigger: place by floor points. A: done."
+                : "Sticks move the model. Right trigger: place by floor points. A: done.";
+            DiagnosticsLog.Write("Fine-tune placement started");
+        }
+
+        void EndFineTune()
+        {
+            tuning=false;
+            if(phase==Phase.PointA || phase==Phase.PointB) phase=hasPlacement ? Phase.Placed : Phase.Searching;
+            firstMeasure=false;
+            Notify(userAdjusted ? "Placement adjusted by hand. View menu > Fine-tune > B returns to the QR markers." : "Placement unchanged.");
+            DiagnosticsLog.Write($"Fine-tune done: {DiagnosticsLog.Pose(placement)}; adjusted {userAdjusted}");
+        }
+
+        string PlacementSummary()
+        {
+            if(phase==Phase.Searching) return markers.Active ? "looking for the QR markers" : "not placed";
+            if(!hasPlacement) return "not placed";
+            if(placedByFloorPoints) return userAdjusted ? "from floor points, adjusted by hand" : "from floor points";
+            if(userAdjusted) return "adjusted by hand";
+            return markerPlaced ? $"from {markers.SolutionMarkerCount} QR markers, fit {alignment.RmsResidualMeters*100:F1} cm" : "placed";
         }
 
         void RecordReference(Vector3 point)
         {
-            if(phase==Phase.Origin)
+            if(phase==Phase.PointA || phase==Phase.Placed)
             {
-                realA=point; phase=Phase.Direction;
-                message="Point at physical floor reference B; right trigger to record.";
+                realA=point; phase=Phase.PointB;
+                message="Point at floor reference B and pull the right trigger. B cancels.";
             }
-            else if(phase==Phase.Direction)
+            else if(phase==Phase.PointB)
             {
                 try
                 {
                     alignment=AlignmentMath.Solve(ModelManifest.ToPoint(manifest.referenceA),ModelManifest.ToPoint(manifest.referenceB),ModelManifest.ToPoint(realA),ModelManifest.ToPoint(point));
+                    ReleaseSessionAnchor();
+                    placement.SetParent(null,true);
                     placement.SetPositionAndRotation(ModelManifest.ToVector(alignment.Translation),Quaternion.Euler(0,(float)(alignment.YawRadians*180/Math.PI),0));
                     placement.localScale=Vector3.one;
-                    phase=Phase.Adjust; showModel=true; markerPlaced=false;
+                    phase=Phase.Placed; hasPlacement=true; showModel=true; markerPlaced=false; placedByFloorPoints=true; userAdjusted=false;
                     AnchorPlacementForSession();
-                    DiagnosticsLog.Write($"Aligned: model baseline {alignment.ModelBaselineMeters:F3} m, room {alignment.PhysicalBaselineMeters:F3} m; {DiagnosticsLog.Pose(placement)}");
-                    message=alignment.RelativeBaselineError>0.05 ? "Reference lengths differ >5%. Check units/points before saving." : "Fine tune with sticks. A saves placement; X enters VR without saving; B starts alignment again.";
+                    DiagnosticsLog.Write($"Placed from floor points: model baseline {alignment.ModelBaselineMeters:F3} m, room {alignment.PhysicalBaselineMeters:F3} m; {DiagnosticsLog.Pose(placement)}");
+                    message=alignment.RelativeBaselineError>0.05 ? "Placed, but the two points are more than 5% apart from the model's: check the points or the model units."
+                        : "Placed from floor points. Sticks fine-tune; A: done.";
                 }
-                catch(Exception e) { message=e.Message; }
+                catch(Exception e) { message=e.Message; phase=Phase.PointA; }
             }
         }
 
-        async Task SaveAsync()
+        void CancelFloorPoints()
         {
-            if(editorPreview) { message="Editor preview: persistent anchors require a Quest. Placement is unsaved."; return; }
-            if(!trackingHealthy) { message="Wait for headset tracking before saving."; return; }
-            if(alignment.RelativeBaselineError>0.05) { message="Reference lengths differ >5%. B to realign or correct the model units."; return; }
-            busy=true; phase=Phase.Saving; anchorStatus="Creating and saving anchor";
-            OVRSpatialAnchor candidate=null;
-            try
-            {
-                candidate=await anchors.CreateAndSaveAsync(new Pose(placement.position,placement.rotation),lifetime.Token);
-                lifetime.Token.ThrowIfCancellationRequested();
-                var previous=activeAnchor;
-                SavedPlacement prior=null;
-                try { prior=store.Read(); } catch(Exception e) { Debug.LogWarning("Replacing unreadable placement: "+e.Message); }
-                placement.SetParent(candidate.transform,true);
-                var saved=new SavedPlacement {
-                    anchorUuid=candidate.Uuid.ToString(), modelFingerprint=fingerprint,
-                    savedUtc=DateTime.UtcNow.ToString("O"), localPosition=placement.localPosition, localRotation=placement.localRotation
-                };
-                store.Write(saved);
-                activeAnchor=candidate; candidate=null;
-                phase=Phase.Pinned; anchorStatus="Saved locally"; ReleaseSessionAnchor(); DiagnosticsLog.Write($"Placement saved to anchor {saved.anchorUuid}: {DiagnosticsLog.Pose(placement)}");
-                message="Verify physical landmarks, then X to enter VR. B realigns.";
-                if(previous) Destroy(previous.gameObject);
-                if(prior!=null && prior.anchorUuid!=saved.anchorUuid)
-                {
-                    try
-                    {
-                        var erased=await OVRSpatialAnchor.EraseAnchorsAsync(null,new[]{Guid.Parse(prior.anchorUuid)});
-                        if(!erased.Success) Debug.LogWarning("New placement saved; old anchor cleanup failed: "+erased.Status);
-                    }
-                    catch(Exception e) { Debug.LogWarning("New placement saved; old anchor cleanup failed: "+e.Message); }
-                }
-            }
-            catch(OperationCanceledException) { }
-            catch(Exception e)
-            {
-                if(this) { phase=Phase.Adjust; anchorStatus="Save failed; placement is unsaved"; message=e.Message+" X still enters VR for this session."; Debug.LogException(e); }
-            }
-            finally
-            {
-                if(candidate)
-                {
-                    if(placement) placement.SetParent(null,true);
-                    try { await candidate.EraseAnchorAsync(); }
-                    catch(Exception e) { Debug.LogWarning("Failed to clean up unsaved anchor: "+e.Message); }
-                    finally { if(candidate) Destroy(candidate.gameObject); }
-                }
-                busy=false;
-            }
+            phase=hasPlacement ? Phase.Placed : Phase.PointA;
+            message=hasPlacement ? "Floor points cancelled; placement unchanged." : "Point at floor reference A and pull the right trigger.";
+            if(!hasPlacement && markers.Active && !editorPreview) { tuning=false; phase=Phase.Searching; message="Look at the QR markers from about 1 m, facing them."; }
         }
-
         // ---- Menu: View (the model's layer tree), Models (import) and model review, on the MenuPanel ----
 
         enum Page { View, Models }
@@ -345,6 +316,7 @@ namespace LabWalk
             // View: one folder of the model's layer tree, as in Rhino.
             menu.Title=folder==null ? "View" : "View  ›  "+folder.Path.Replace(" > ","  ›  ");
             if(folder!=null) Row("‹  Back",()=>OpenFolder(folder.Parent));
+            else if(model!=null) Add(Row("Placement: "+PlacementSummary()),"Fine-tune",MenuPanel.Style.Action,StartFineTune);
             foreach(var layer in folder==null ? layerView.Roots : folder.Children)
             {
                 var l=layer;
@@ -402,8 +374,8 @@ namespace LabWalk
                 if(!this) { loaded.Dispose(); return; }
                 candidate=loaded; phase=Phase.Review;
             }
-            catch(OperationCanceledException) { if(this) { phase=resumePhase; message="Import cancelled. The current model is unchanged."; } }
-            catch(Exception e) { if(this) { phase=resumePhase; message="Import failed: "+e.Message+" The current model is unchanged."; Debug.LogException(e); } }
+            catch(OperationCanceledException) { if(this) { phase=resumePhase; Notify("Import cancelled. The current model is unchanged."); } }
+            catch(Exception e) { if(this) { phase=resumePhase; Notify("Import failed: "+e.Message+" The current model is unchanged."); Debug.LogException(e); } }
             finally { importCancel?.Dispose(); importCancel=null; busy=false; }
         }
 
@@ -421,12 +393,12 @@ namespace LabWalk
                 Adopt(next);
                 view.ClearMeasurement(); firstMeasure=false; measurement=DefaultMeasurement;
                 busy=false;
-                if(editorPreview) BeginAlignment(); else await RestoreAsync();
+                StartPlacement();
             }
             catch(OperationCanceledException) { }
             catch(Exception e)
             {
-                if(this) { candidate=null; next.Dispose(); phase=resumePhase; message="Could not save the selection: "+e.Message+" The current model is unchanged."; Debug.LogException(e); }
+                if(this) { candidate=null; next.Dispose(); phase=resumePhase; Notify("Could not save the selection: "+e.Message+" The current model is unchanged."); Debug.LogException(e); }
             }
             finally { busy=false; }
         }
@@ -434,7 +406,7 @@ namespace LabWalk
         void CancelReview()
         {
             candidate?.Dispose(); candidate=null;
-            phase=resumePhase; message="Import cancelled. The current model is unchanged.";
+            phase=resumePhase; Notify("Import cancelled. The current model is unchanged.");
         }
 
         void HandleModelUi(bool accept,bool back,bool press,bool pin,Ray pointer,bool pointerTracked)
@@ -526,8 +498,8 @@ namespace LabWalk
         float nextPick;
         bool clickPending;
 
-        bool CanPick => model!=null && layerView!=null && !busy && trackingHealthy && showModel && !menuOpen &&
-            (phase==Phase.Adjust || phase==Phase.Pinned) && model.Objects.Count>1 && picker!=null && picker.Available;
+        bool CanPick => model!=null && layerView!=null && !busy && trackingHealthy && showModel && !menuOpen && !tuning &&
+            phase==Phase.Placed && model.Objects.Count>1 && picker!=null && picker.Available;
 
         void UpdatePicking(Ray ray,bool tracked,bool click)
         {
@@ -544,8 +516,8 @@ namespace LabWalk
                     if(o!=null)
                     {
                         layerView.ToggleObject(hoverIndex);
-                        message=layerView.IsObjectWire(hoverIndex) ? $"{o.Label}: wireframe. Point + trigger again for solid; View menu: Make all solid."
-                            : $"{o.Label}: solid again.";
+                        Notify(layerView.IsObjectWire(hoverIndex) ? $"{o.Label}: wireframe. Point + trigger again for solid; View menu: Make all solid."
+                            : $"{o.Label}: solid again.");
                     }
                 }
             }
@@ -603,16 +575,15 @@ namespace LabWalk
             if(recenterFollowUp>=0 && Time.unscaledTime>=recenterFollowUp)
             {
                 recenterFollowUp=-1;
-                var anchorMoved=activeAnchor ? Vector3.Distance(activeAnchor.transform.position,lastAnchorPosition) : 0;
+                var anchorMoved=sessionAnchor ? Vector3.Distance(sessionAnchor.transform.position,lastAnchorPosition) : 0;
                 var originJumped=maxHeadStep>0.05f || maxHeadTurn>3;
-                DiagnosticsLog.Write($"Recenter settled: largest one-frame head step {maxHeadStep*100:F1} cm / {maxHeadTurn:F1} deg (origin jump: {originJumped}); anchor moved {anchorMoved*100:F1} cm; placement {DiagnosticsLog.Pose(placement)}; anchor {DiagnosticsLog.Pose(activeAnchor ? activeAnchor.transform : null)}");
-                message=originJumped ? "View recentered and the tracking origin jumped. Check the landmarks; B realigns if the model moved."
-                    : "View recentered; tracking origin unchanged. The model should not have moved.";
+                DiagnosticsLog.Write($"Recenter settled: largest one-frame head step {maxHeadStep*100:F1} cm / {maxHeadTurn:F1} deg (origin jump: {originJumped}); anchor moved {anchorMoved*100:F1} cm; placement {DiagnosticsLog.Pose(placement)}; anchor {DiagnosticsLog.Pose(sessionAnchor ? sessionAnchor.transform : null)}");
+                if(originJumped) Notify("View recentered. The model stays locked to the room; the QR markers re-check it.");
             }
             if(recenterFollowUp<0)
             {
                 lastPlacementPosition=placement.position; lastPlacementYaw=placement.eulerAngles.y;
-                if(activeAnchor) { lastAnchorPosition=activeAnchor.transform.position; lastAnchorYaw=activeAnchor.transform.eulerAngles.y; }
+                if(sessionAnchor) { lastAnchorPosition=sessionAnchor.transform.position; lastAnchorYaw=sessionAnchor.transform.eulerAngles.y; }
             }
         }
 
@@ -625,11 +596,11 @@ namespace LabWalk
             trackingHealthy=editorPreview || (OVRManager.isHmdPresent && OVRManager.hasInputFocus &&
                 OVRManager.tracker != null && OVRManager.tracker.isPositionTracked);
             if(trackingHealthy && firstTrackedTime<0) firstTrackedTime=Time.unscaledTime;
-            var anchorTracked=phase!=Phase.Pinned || (activeAnchor && activeAnchor.IsTracked);
+            var anchorTracked=!sessionAnchor || sessionAnchor.IsTracked;
             if((!trackingHealthy || !anchorTracked) && view.Immersive)
             {
                 view.SetImmersive(false);
-                message="Tracking interrupted. Verify alignment before entering VR again.";
+                Notify("Tracking interrupted. Check the model against the room before entering VR again.");
             }
             if(editorPreview) MoveDesktopCamera();
             var ray=editorPreview ? eye.ScreenPointToRay(Mouse.current==null ? new Vector2(Screen.width/2f,Screen.height/2f) : Mouse.current.position.ReadValue())
@@ -650,49 +621,48 @@ namespace LabWalk
                 bool openModels=editorPreview ? k!=null && k.oKey.wasPressedThisFrame : OVRInput.GetDown(OVRInput.RawButton.LHandTrigger);
                 bool pin=editorPreview ? k!=null && k.pKey.wasPressedThisFrame : OVRInput.GetDown(OVRInput.RawButton.Y);
                 if(modelUi) HandleModelUi(accept,back,trigger,pin,ray,controllerTracked);
-                else if(openModels && !busy && phase!=Phase.Saving) OpenMenu();
+                else if(openModels && !busy) OpenMenu();
             }
             UpdateMenu();
             var pickClick=false;
             if(model!=null && !busy && trackingHealthy && !modelUi && !menuOpen)
             {
                 var keys=Keyboard.current;
-                bool save=editorPreview ? keys!=null && keys.enterKey.wasPressedThisFrame : OVRInput.GetDown(OVRInput.RawButton.A);
-                bool realign=editorPreview ? keys!=null && keys.rKey.wasPressedThisFrame : OVRInput.GetDown(OVRInput.RawButton.B);
+                bool buttonA=editorPreview ? keys!=null && keys.enterKey.wasPressedThisFrame : OVRInput.GetDown(OVRInput.RawButton.A);
+                bool buttonB=editorPreview ? keys!=null && keys.rKey.wasPressedThisFrame : OVRInput.GetDown(OVRInput.RawButton.B);
                 bool toggle=editorPreview ? keys!=null && keys.vKey.wasPressedThisFrame : OVRInput.GetDown(OVRInput.RawButton.X);
                 bool hide=editorPreview ? keys!=null && keys.hKey.wasPressedThisFrame : OVRInput.GetDown(OVRInput.RawButton.Y);
                 bool measure=editorPreview ? keys!=null && keys.mKey.wasPressedThisFrame : OVRInput.GetDown(OVRInput.RawButton.RHandTrigger);
                 bool helpButton=editorPreview ? keys!=null && keys.tabKey.wasPressedThisFrame : OVRInput.GetDown(OVRInput.RawButton.Start);
-                bool snap=editorPreview ? keys!=null && keys.kKey.wasPressedThisFrame : OVRInput.GetDown(OVRInput.RawButton.LIndexTrigger);
                 bool nextDesign=editorPreview ? keys!=null && keys.lKey.wasPressedThisFrame : OVRInput.GetDown(OVRInput.RawButton.LThumbstick);
-                if(nextDesign && layerView!=null && layerView.OptionGroups.Count>0)
-                {
-                    var next=layerView.NextOption(layerView.OptionGroups[0]);
-                    layerView.Set(next,LayerView.Display.Solid);
-                    message=$"Showing {layerView.OptionGroups[0]}: {next.Name}";
-                }
-                if(realign) BeginAlignment();
-                else if(trigger && (phase==Phase.Adjust || phase==Phase.Pinned)) pickClick=true;
-                else if(trigger && hit) RecordReference(point);
-                else if(snap && markers.HasSolution) ApplyMarkerFit("Re-snapped to markers");
-                if(save && phase==Phase.Adjust) _=SaveAsync();
-                else if(save && phase==Phase.Recovery) _=RestoreAsync();
-                // VR is allowed from an aligned but unsaved placement (session only): spatial anchors may be
-                // unavailable, e.g. on headsets in shared mode. The same reference-length check as saving applies.
-                var sessionOnly=phase==Phase.Adjust && alignment.RelativeBaselineError<=0.05;
-                if(toggle && (phase==Phase.Pinned || sessionOnly) && anchorTracked)
-                {
-                    view.SetImmersive(!view.Immersive); help=!view.Immersive; showModel=true;
-                    if(sessionOnly && view.Immersive && !editorPreview) message="VR with an unsaved placement: it will not be restored next launch.";
-                }
-                if(hide && !view.Immersive) showModel=!showModel;
                 if(helpButton) help=!help;
-                if(measure && hit && !view.Immersive)
+                if(hide && !view.Immersive && hasPlacement) showModel=!showModel;
+                if(tuning)
                 {
-                    if(!firstMeasure) { measuredA=point; firstMeasure=true; measurement="Measuring: right grip at the other end of the known distance."; }
-                    else { firstMeasure=false; measurement=$"Measured {Vector3.Distance(measuredA,point):F3} m | expected {manifest.knownDistanceMeters:F3} m"; view.Measurement(measuredA,point); }
+                    // Fine-tune placement: everything about placing the model lives here.
+                    var floorPoints=phase==Phase.PointA || phase==Phase.PointB;
+                    if(buttonA && !(floorPoints && !hasPlacement)) EndFineTune();
+                    else if(buttonB && floorPoints) CancelFloorPoints();
+                    else if(buttonB && markers.HasSolution) { ApplyMarkerFit(true); tuning=true; }
+                    else if(trigger && hit) RecordReference(point);
+                    if(measure && hit)
+                    {
+                        if(!firstMeasure) { measuredA=point; firstMeasure=true; measurement="Measuring: right grip at the other end of a known distance."; }
+                        else { firstMeasure=false; measurement=$"Measured {Vector3.Distance(measuredA,point):F3} m | model reference {manifest.knownDistanceMeters:F3} m"; view.Measurement(measuredA,point); }
+                    }
+                    if(phase==Phase.Placed) FineTune();
                 }
-                if(phase==Phase.Adjust) FineTune();
+                else if(phase==Phase.Placed)
+                {
+                    if(nextDesign && layerView!=null && layerView.OptionGroups.Count>0)
+                    {
+                        var next=layerView.NextOption(layerView.OptionGroups[0]);
+                        layerView.Set(next,LayerView.Display.Solid);
+                        Notify($"Showing {layerView.OptionGroups[0]}: {next.Name}");
+                    }
+                    if(trigger) pickClick=true;
+                    if(toggle && anchorTracked) { view.SetImmersive(!view.Immersive); showModel=true; }
+                }
             }
             UpdateMarkers(modelUi);
             UpdatePicking(ray,controllerTracked,pickClick);
@@ -705,11 +675,14 @@ namespace LabWalk
             }
             if(model!=null)
             {
-                var visible=showModel && trackingHealthy && anchorTracked && (phase==Phase.Adjust || phase==Phase.Pinned || phase==Phase.Saving);
+                var visible=showModel && trackingHealthy && anchorTracked && hasPlacement && (phase==Phase.Placed || phase==Phase.PointA || phase==Phase.PointB);
                 model.Root.SetActive(visible);
-                view.Reference(placement.TransformPoint(manifest.referenceA),placement.TransformPoint(manifest.referenceB),visible && !view.Immersive);
+                // Placement aids only while placing or fine-tuning: reference line, and marker crosses
+                // (magenta where the model expects each code, cyan where the camera sees it).
+                var aids=!view.Immersive && trackingHealthy && (tuning || phase==Phase.Searching);
+                view.Reference(placement.TransformPoint(manifest.referenceA),placement.TransformPoint(manifest.referenceB),visible && aids && tuning);
                 view.BeginMarkers();
-                if(markers.Active && !view.Immersive && trackingHealthy)
+                if(markers.Active && aids)
                     foreach(var (expected,seen) in markers.Visuals(placement))
                     {
                         if(visible) view.Marker(expected,false);
@@ -721,28 +694,33 @@ namespace LabWalk
             else if(Time.unscaledTime>=panelTime)
             {
                 panelTime=Time.unscaledTime+0.15f;
-                var size=model==null ? "--" : $"{model.BoundsMeters.size.x:F3} x {model.BoundsMeters.size.y:F3} x {model.BoundsMeters.size.z:F3} m (X/Y/Z)";
-                var referenceText=phase==Phase.Adjust ? $"Reference: model {alignment.ModelBaselineMeters:F3} m / room {alignment.PhysicalBaselineMeters:F3} m" : "Yellow line marks model reference A to B.";
-                var status=!trackingHealthy ? "Tracking unavailable" : !anchorTracked ? "Anchor tracking lost; use B to realign" : anchorStatus;
-                // Button help lives on the controller tooltips; the panel keeps state and messages only.
-                var text=new StringBuilder($"{manifest?.displayName ?? "LAB WALK"}  |  {PhaseName()}\n{Wrap(message,52)}\nAnchor: {status}");
-                var designs=layerView?.Summary();
-                if(designs!=null) text.Append('\n').Append(Wrap(designs,52));
-                if(markers.Active) text.Append('\n').Append(Wrap(markers.Status,52));
-                if(measurement!=DefaultMeasurement) text.Append('\n').Append(measurement);
-                if(help)
-                    text.Append($"\n\n{1f/averageFrameTime:F0} FPS  |  {size}\n{Wrap(model?.ImportSummary,52)}\n{referenceText}");
-                else if(!editorPreview)
-                    text.Append("\nMenu button (left): show button help");
+                // Once placed, the status panel only appears for a short message or a problem; placing and
+                // fine-tuning show what is needed for that.
+                var problem=!trackingHealthy || !anchorTracked || phase==Phase.Error || (model?.Incomplete ?? false);
+                var placing=phase!=Phase.Placed || tuning;
+                var text=new StringBuilder();
+                if(placing) text.Append($"{manifest?.displayName ?? "LAB WALK"}  |  {PhaseName()}\n");
+                if(placing || Notifying || phase==Phase.Error) text.Append(Wrap(message,52)).Append('\n');
+                if(!trackingHealthy) text.Append("Headset tracking unavailable.\n");
+                else if(!anchorTracked) text.Append("The room lock for the model is lost; look around the room.\n");
+                if(model?.Incomplete ?? false) text.Append("Some geometry could not be imported (see the Models review).\n");
+                if(markers.Active && (phase==Phase.Searching || tuning)) text.Append(Wrap(markers.Status,52)).Append('\n');
+                if(tuning)
+                {
+                    text.Append("Placement: ").Append(PlacementSummary()).Append('\n');
+                    if(placedByFloorPoints) text.Append($"Floor points: model {alignment.ModelBaselineMeters:F3} m / room {alignment.PhysicalBaselineMeters:F3} m\n");
+                    if(measurement!=DefaultMeasurement) text.Append(measurement).Append('\n');
+                    text.Append($"{1f/averageFrameTime:F0} FPS");
+                }
                 if(editorPreview)
-                    text.Append("\n\nClick: point | Enter: save/retry | R: realign | O: models | K: snap to markers\nV: VR preview | H: hide model | M: measure | Tab: help\nWASD/QE: camera | right mouse: look | arrows: nudge | Z/C: yaw | PageUp/PageDown: height");
-                view.UpdatePanel(text.ToString(),!view.Immersive || help || !trackingHealthy || !anchorTracked || phase==Phase.Error || (model?.Incomplete ?? false));
+                    text.Append("\n\nClick: point | Enter: done | R: re-snap | O: menu | V: VR | H: hide model | M: measure | Tab: help\nWASD/QE: camera | right mouse: look | arrows: nudge | Z/C: yaw | PageUp/PageDown: height");
+                view.UpdatePanel(text.ToString().TrimEnd(),placing || Notifying || problem);
             }
         }
-
-        // ---- Session anchor: world-locks an aligned but unsaved placement ----
+        // ---- Session anchor: world-locks the placement for this session ----
         // Without a boundary the tracking origin (stage space) is not stable, so content must follow an anchor
-        // from the moment it is placed, not only after it is saved (Meta boundaryless guidance).
+        // from the moment it is placed (Meta boundaryless guidance). Nothing is saved: the QR markers place
+        // the model again at every launch.
         OVRSpatialAnchor sessionAnchor;
         int sessionAnchorRequest;
 
@@ -753,7 +731,7 @@ namespace LabWalk
             try
             {
                 var anchor=await anchors.CreateAsync(new Pose(placement.position,placement.rotation),"Session anchor (unsaved)",lifetime.Token);
-                if(!this || request!=sessionAnchorRequest || phase!=Phase.Adjust || placement.parent)
+                if(!this || request!=sessionAnchorRequest || phase!=Phase.Placed || placement.parent)
                 { if(anchor) Destroy(anchor.gameObject); return; }
                 ReleaseSessionAnchor();
                 sessionAnchor=anchor;
@@ -793,54 +771,41 @@ namespace LabWalk
 
         // ---- QR marker calibration ----
 
-        float markerWarnTime;
         void UpdateMarkers(bool modelUi)
         {
-            // The camera looks for codes only while it is useful: passthrough visible, tracking healthy, no menu.
-            var scanPhase=phase==Phase.Origin || phase==Phase.Direction || phase==Phase.Adjust || phase==Phase.Pinned || phase==Phase.Recovery;
-            markers.Update(model!=null && scanPhase && !modelUi && trackingHealthy && !view.Immersive);
+            // The camera looks for codes while placing or fine-tuning, and after placement until every code is
+            // steady (refining the fit); then it stops to save power. Only with passthrough, tracking and no menu.
+            var refining=phase==Phase.Placed && markerPlaced && !userAdjusted && !markers.AllSteady;
+            var scan=model!=null && !modelUi && trackingHealthy && !view.Immersive && (phase==Phase.Searching || tuning || refining);
+            markers.Update(scan);
             if(!markers.HasSolution || model==null || busy || modelUi || !trackingHealthy) return;
-            // Direction means the user has started a manual two-point alignment; let them finish it.
-            var waiting=phase==Phase.Origin || phase==Phase.Recovery;
-            if(waiting) { ApplyMarkerFit("Placed automatically from markers"); return; }
-            // Keep refining a marker placement while more samples arrive, until the user nudges it by hand.
-            if(phase==Phase.Adjust && markerPlaced && !userAdjusted)
+            if(phase==Phase.Searching) { ApplyMarkerFit(true); return; }
+            // Keep refining a marker placement while more sightings arrive, until it is adjusted by hand.
+            if(phase==Phase.Placed && markerPlaced && !userAdjusted)
             {
                 var fit=markers.Solution;
                 var target=ModelManifest.ToVector(fit.Translation);
                 var yaw=(float)(fit.YawRadians*180/Math.PI);
                 if(Vector3.Distance(placement.position,target)>0.002f || Mathf.Abs(Mathf.DeltaAngle(placement.eulerAngles.y,yaw))>0.1f)
-                    ApplyMarkerFit("Placed automatically from markers");
-                return;
-            }
-            // A saved or hand-adjusted placement that the markers contradict: say so, do not move it silently.
-            if((phase==Phase.Pinned || phase==Phase.Adjust) && Time.unscaledTime>=markerWarnTime)
-            {
-                markerWarnTime=Time.unscaledTime+2;
-                var off=markers.Deviation(placement);
-                if(off>0.03f) message=$"Markers show the model is off by {off*100:F1} cm. Left trigger re-snaps to the markers.";
+                    ApplyMarkerFit(false);
             }
         }
 
-        void ApplyMarkerFit(string reason)
+        // Places the model from the markers' fit. announce: say so on the panel (first placement, re-snap).
+        void ApplyMarkerFit(bool announce)
         {
             var fit=markers.Solution;
-            var wasPinned=phase==Phase.Pinned;
-            // Detach from a saved anchor (kept until a new placement is saved); a session anchor can stay.
-            if(placement.parent && (!sessionAnchor || placement.parent!=sessionAnchor.transform)) placement.SetParent(null,true);
             placement.SetPositionAndRotation(ModelManifest.ToVector(fit.Translation),Quaternion.Euler(0,(float)(fit.YawRadians*180/Math.PI),0));
             placement.localScale=Vector3.one;
-            alignment=fit; phase=Phase.Adjust; showModel=true; markerPlaced=true; userAdjusted=false;
+            var first=!hasPlacement;
+            alignment=fit; phase=Phase.Placed; hasPlacement=true; markerPlaced=true; userAdjusted=false; placedByFloorPoints=false;
+            if(first) showModel=true;
             if(!placement.parent) AnchorPlacementForSession();
-            if(wasPinned) anchorStatus="Re-snapped; previous saved placement retained until A";
-            var warning=fit.MaxResidualMeters>0.05 ? $" Markers disagree by up to {fit.MaxResidualMeters*100:F0} cm: check their measured positions." :
+            var warning=fit.MaxResidualMeters>0.05 ? $" The markers disagree by up to {fit.MaxResidualMeters*100:F0} cm: check their measured positions." :
                 fit.RelativeBaselineError>0.05 ? " Marker spacing differs >5% from the model: check units and measurements." : "";
-            message=$"{reason}: {markers.SolutionMarkerCount} markers, fit {fit.RmsResidualMeters*100:F1} cm.{warning} A saves; X enters VR; left trigger re-snaps.";
-            if(reason.StartsWith("Re-snapped") || !markerPlacedLogged) DiagnosticsLog.Write($"{reason}: {DiagnosticsLog.Pose(placement)}; rms {fit.RmsResidualMeters*100:F1} cm");
-            markerPlacedLogged=true;
+            if(announce) Notify($"Placed from {markers.SolutionMarkerCount} QR markers (fit {fit.RmsResidualMeters*100:F1} cm).{warning}");
+            if(announce) DiagnosticsLog.Write($"Placed from markers: {DiagnosticsLog.Pose(placement)}; rms {fit.RmsResidualMeters*100:F1} cm");
         }
-        bool markerPlacedLogged;
-
         // ---- Controller tooltips: labels describe what each button does in the current state ----
 
         void UpdateTooltips()
@@ -864,49 +829,38 @@ namespace LabWalk
                 return;
             }
             guide.Set(ControllerGuide.Control.Menu,"Hide help");
-            if(!busy && phase!=Phase.Saving) guide.Set(ControllerGuide.Control.LeftGrip,layerView!=null && layerView.Any ? "View / models" : "Models");
-            // Left stick click cycles the first design option; the adjust label is combined with it below.
-            var cycle=layerView!=null && layerView.OptionGroups.Count>0 && model!=null ? "Click: "+layerView.NextOption(layerView.OptionGroups[0]).Name : null;
-            if(cycle!=null && phase!=Phase.Adjust) guide.Set(ControllerGuide.Control.LeftStick,cycle);
-            if(busy || model==null) return;
+            if(!busy) guide.Set(ControllerGuide.Control.LeftGrip,layerView!=null && layerView.Any ? "View / models" : "Models");
+            if(busy || model==null || phase==Phase.Error) return;
             var passthrough=!view.Immersive;
-            switch(phase)
+            if(hasPlacement && passthrough) guide.Set(ControllerGuide.Control.Y,showModel ? "Hide model" : "Show model");
+            if(tuning)
             {
-                case Phase.Origin: guide.Set(ControllerGuide.Control.RightTrigger,"Mark floor point A"); break;
-                case Phase.Direction: guide.Set(ControllerGuide.Control.RightTrigger,"Mark floor point B"); guide.Set(ControllerGuide.Control.B,"Start over"); break;
-                case Phase.Adjust:
-                    guide.Set(ControllerGuide.Control.A,"Save placement");
-                    guide.Set(ControllerGuide.Control.B,"Realign");
-                    guide.Set(ControllerGuide.Control.RightStick,"Slide model");
-                    guide.Set(ControllerGuide.Control.LeftStick,cycle!=null ? "Turn / raise  |  "+cycle : "Turn / raise");
-                    if(alignment.RelativeBaselineError<=0.05) guide.Set(ControllerGuide.Control.X,passthrough ? "Enter VR (unsaved)" : "Passthrough");
-                    break;
-                case Phase.Pinned:
-                    guide.Set(ControllerGuide.Control.X,passthrough ? "Enter VR" : "Passthrough");
-                    guide.Set(ControllerGuide.Control.B,"Realign");
-                    break;
-                case Phase.Recovery: guide.Set(ControllerGuide.Control.A,"Retry restore"); guide.Set(ControllerGuide.Control.B,"Realign"); break;
-                case Phase.Error: return;
+                var floorPoints=phase==Phase.PointA || phase==Phase.PointB;
+                if(!(floorPoints && !hasPlacement)) guide.Set(ControllerGuide.Control.A,"Done");
+                if(floorPoints) guide.Set(ControllerGuide.Control.B,"Cancel floor points");
+                else if(markers.HasSolution) guide.Set(ControllerGuide.Control.B,"Re-snap to QR markers");
+                guide.Set(ControllerGuide.Control.RightTrigger,phase==Phase.PointB ? "Floor point B" : "Floor point A");
+                guide.Set(ControllerGuide.Control.RightGrip,firstMeasure ? "Measure: end point" : "Measure floor");
+                if(phase==Phase.Placed) { guide.Set(ControllerGuide.Control.RightStick,"Slide model"); guide.Set(ControllerGuide.Control.LeftStick,"Turn / raise"); }
+                return;
             }
-            if(passthrough && (phase==Phase.Adjust || phase==Phase.Pinned)) guide.Set(ControllerGuide.Control.Y,showModel ? "Hide model" : "Show model");
+            if(phase!=Phase.Placed) return;
+            guide.Set(ControllerGuide.Control.X,passthrough ? "Enter VR" : "Passthrough");
+            if(layerView!=null && layerView.OptionGroups.Count>0) guide.Set(ControllerGuide.Control.LeftStick,"Click: "+layerView.NextOption(layerView.OptionGroups[0]).Name);
             if(CanPick && hoverIndex>0) guide.Set(ControllerGuide.Control.RightTrigger,layerView.IsObjectWire(hoverIndex) ? "Make solid" : "Make wireframe");
-            if(passthrough && phase!=Phase.Loading) guide.Set(ControllerGuide.Control.RightGrip,firstMeasure ? "Measure: end point" : "Measure floor");
-            if(markers.HasSolution && (phase==Phase.Adjust || phase==Phase.Pinned)) guide.Set(ControllerGuide.Control.LeftTrigger,"Snap to markers");
         }
 
         string PhaseName()
         {
             switch(phase)
             {
-                case Phase.Origin: return markers.Active ? "Look at markers or mark point A" : "Align: mark point A";
-                case Phase.Direction: return "Align: mark point B";
-                case Phase.Adjust: return "Adjust, not saved";
-                case Phase.Pinned: return view.Immersive ? "VR" : "Placed";
-                case Phase.Recovery: return "Restore failed";
+                case Phase.Searching: return "Finding QR markers";
+                case Phase.PointA: return "Floor point A";
+                case Phase.PointB: return "Floor point B";
+                case Phase.Placed: return tuning ? "Fine-tune placement" : view.Immersive ? "VR" : "Placed";
                 default: return phase.ToString();
             }
         }
-
         void FineTune()
         {
             Vector2 slide=Vector2.zero,turn=Vector2.zero;

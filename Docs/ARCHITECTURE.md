@@ -23,14 +23,13 @@ Switching passthrough/VR changes the passthrough layer visibility and camera bac
 
 The loader reports bounds in model-placement coordinates after unit conversion, independent of world alignment. `coordinateUnits` explicitly distinguishes standard meter GLBs from source-unit coordinates; rhinoDocument reads units from a 3DM. Reference points remain in Unity-local meters under either import policy. The file-size cap is 150 MB, a guard for this initial loader; it is not a Quest memory or performance guarantee. Textures and decoded geometry can require substantially more memory than the file size.
 
-## Anchor persistence and recovery
+## Placement and anchoring
 
-`MetaAnchorService` uses the Core 205 API: `OVRSpatialAnchor`, `SaveAnchorAsync`, `LoadUnboundAnchorsAsync`, `LocalizeAsync`, `TryGetPose`, and `BindTo`. Creation waits for a created/localized anchor. Restoration first localizes the native anchor and obtains its pose; it never reuses coordinates from an old Unity tracking origin as a substitute.
+Since 0.8.0 placement is not persisted. `MarkerCalibrator` (camera QR scanning) places the model at every launch: `LabWalkApp` starts in `Searching`, applies the markers' fit once two are steady, and keeps refining silently until every marker is steady or the placement is fine-tuned by hand. Models without markers use two floor points (`PointA`/`PointB`), also reachable from **Fine-tune placement**.
 
-`PlacementStore` writes an anchor UUID, a model fingerprint, a relative pose, and a timestamp. SHA-256 covers the exact model and manifest bytes, so changing either forces alignment again. The native anchor is saved before metadata is committed. The previous placement record remains until the new record is written through a temporary file and replace operation. Previous anchors are erased after the new placement succeeds; cleanup failures are logged without undoing the new save. This is one placement per headset, with no sharing or account system.
+`MetaAnchorService.CreateAsync` makes an unsaved (session) `OVRSpatialAnchor` at the placement, and the placement is parented to it, so the model stays locked to the room without a boundary (stage space) and through recenters. It is released when placement restarts.
 
-A restored model starts in passthrough for inspection. Tracking loss exits immersive mode and hides the model until tracking returns. The user must explicitly re-enter VR. Small tracking drift is not automatically measurable with this app; B restarts manual alignment. The scaffold uses one anchor for the whole model. Accuracy across a large lab must be measured before considering a multiple-anchor design.
-
+Tracking loss exits immersive mode and hides the model until tracking returns; VR must be re-entered explicitly. One anchor holds the whole model; accuracy across the large lab should be checked against the markers (Fine-tune shows the fit).
 ## Extension points
 
 - Extend 3DM material fidelity or add a separate meshing stage for files without cached render meshes. Direct 3DM mesh reading is implemented; general NURBS tessellation is not.

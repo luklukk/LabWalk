@@ -85,7 +85,7 @@ To update only the model, place `model.json` and its GLB in one local folder:
 
 The script stops the app, copies the GLB or 3DM then its manifest into `/sdcard/Android/data/com.architecturelab.labwalk/files/Models`, and relaunches it. A USB debugging connection is sufficient; the headset app has no cloud account, model server, or storage browser. A side-loaded override remains after APK updates. To return to the bundled model, remove or rename only the override `model.json` in that folder.
 
-Saved placement metadata is `files/placement.json` in the same app data root. It contains an anchor UUID and model fingerprint; the anchor itself is saved through Meta's SDK. Uninstalling the app or clearing its data can lose the association.
+Placement is not saved (since 0.8.0): the QR markers place the model at every launch, and a session-only spatial anchor keeps it locked to the room while the app runs.
 
 ## Simulator testing on Windows
 
@@ -103,15 +103,17 @@ For the separate **desktop smoke test**, temporarily disable **Initialize XR on 
 
 | Action | Quest controller | Desktop preview |
 |---|---|---|
-| Record floor reference | Right trigger | Left mouse click |
-| Save placement / retry restoration | A | Enter (save reports hardware required) |
-| Start alignment again | B | R |
-| Passthrough / immersive view | X | V, after alignment |
-| Hide/show model during alignment | Y | H |
-| Measure two floor points | Right grip twice | M twice at pointer locations |
-| Fine translation in viewing direction | Right stick | Arrow keys |
-| Fine yaw / height | Left stick X / Y | Z/C and PageUp/PageDown |
-| Show/hide status panel | Left Menu | Tab |
-| Move/look in preview | Physical movement on headset | WASD, Q/E; right mouse drag |
+| Menu (View, Fine-tune placement, Models) | Left grip | O |
+| Make the pointed item wireframe / solid | Right trigger (placed) | Left mouse click |
+| Passthrough / immersive view | X | V |
+| Hide/show model | Y | H |
+| Next design option | Left stick click | L |
+| Fine-tune: done | A | Enter |
+| Fine-tune: re-snap to QR markers / cancel floor points | B | R |
+| Fine-tune: floor points A and B | Right trigger | Left mouse click |
+| Fine-tune: measure two floor points | Right grip twice | M twice |
+| Fine-tune: slide in viewing direction | Right stick | Arrow keys |
+| Fine-tune: yaw / height | Left stick X / Y | Z/C and PageUp/PageDown |
+| Show/hide controller labels | Left Menu | Tab || Move/look in preview | Physical movement on headset | WASD, Q/E; right mouse drag |
 
 Fine adjustments are active only after recording both references and before saving. Maximum rates are 8 cm/s and 6 degrees/s. No joystick locomotion, teleport, world scaling or boundary disabling is implemented.

@@ -35,6 +35,8 @@ namespace LabWalk
         public bool HasSolution { get; private set; }
         public AlignmentResult Solution { get; private set; }
         public int SolutionMarkerCount { get; private set; }
+        // Every marker in the model is steady: more sightings no longer change the fit.
+        public bool AllSteady => markers.Length>0 && markers.All(m=>tracks.TryGetValue(m.id,out var t) && t.Steady);
 
         public void SetMarkers(MarkerPoint[] modelMarkers)
         {
@@ -139,7 +141,7 @@ namespace LabWalk
                 else if(t.Steady) text.Append($" ok {t.Mean.y:F2}m  ");
                 else text.Append(now-t.LastSeen<LostAfter ? $" {t.Used}/{MinSamples}  " : " lost  ");
             }
-            text.Append(HasSolution ? $"| fit {Solution.RmsResidualMeters*100:F1} cm rms" : "| look at 2+ codes, ~1 m, facing them");
+            if(HasSolution) text.Append($"| fit {Solution.RmsResidualMeters*100:F1} cm rms");
             text.Append('\n').Append(scanner.Status);
             return text.ToString();
         }

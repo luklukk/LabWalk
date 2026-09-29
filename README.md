@@ -1,6 +1,6 @@
 # Lab Walk
 
-A small Unity app for a standalone Quest 3S architectural walkthrough: load a Rhino `.3dm` or exported `.glb` at 1:1 scale, align two floor references, save a spatial anchor, and switch from passthrough to immersive VR.
+A small Unity app for a standalone Quest 3S architectural walkthrough: load a Rhino `.3dm` or exported `.glb` at 1:1 scale, place it automatically from printed QR codes, and switch from passthrough to immersive VR.
 
 **Status:** imported, compiled and built for Android in Unity 6000.0.66f2. Built APKs are published as **GitHub Releases** (not committed); each release lists the APK's SHA-256 and MD5. For organization-managed headsets, add this permanent link in Meta Horizon Device Manager; it always downloads the newest release (from v0.5.0): https://github.com/luklukk/LabWalk/releases/latest/download/LabWalk-Quest3S.apk Apps added by link do not update themselves: add each new release's link again. Every release must raise the Android version code and be signed with the same key. The actual runtime loader passes desktop checks for sample dimensions, rigid alignment and placement preservation when switching views. Physical Quest behavior is untested. See [validation](Docs/VALIDATION.md) for completed checks and remaining device tests.
 
@@ -23,24 +23,26 @@ Generated scene/settings, asset metadata and `Packages/packages-lock.json` are i
 
 ## First walkthrough
 
-**Controls (0.4.0):** both controllers appear as tracked models (Meta's Touch Plus models via `OVRControllerPrefab`). Labels on the controllers show what each button does in the current step; the **Menu** button on the left controller hides or shows them. A small status panel rides above the left controller (it moves in front of your view if that controller is not tracked). The steps below name the same buttons.
+**Placement (0.8.0):** the model places itself. When the app starts or a model is loaded, the passthrough camera looks for the printed QR codes; after two are found the model appears, locked to the room. More sightings keep refining it. Nothing else about placement is shown unless it is needed.
 
-The original sample room has a 6 m by 8 m footprint, 3 m walls, a desk, and a 1 m calibration cube. Its two yellow reference markers are at model coordinates `(0, 0, 0)` and `(0, 0, 2)` in Unity meters. The floor slab extends 0.1 m below the floor, so the overall reported Y bound is 3.1 m.
+**Controls once placed** (labels on the controllers show them; the **Menu** button hides or shows the labels):
 
-1. Place two physical floor marks 2 m apart within your usable boundary. Set the headset floor level correctly.
-2. In passthrough, aim the cyan pointer at the first mark and press the **right trigger**; repeat at the second mark. The pointer intersects the headset's horizontal floor plane. It does not scan surfaces.
-3. Use the **right stick** to slide the model relative to where you face. Use the **left stick horizontally** for yaw and **vertically** for height. Adjustments move the model; scale stays fixed. **Y** hides/shows the model to inspect the physical room.
-4. Press the **right grip** at each end of a known floor distance. The green measurement and model bounds provide a scale check. For the sample, compare the two yellow marks against a tape-measured 2 m span.
-5. Press **A** to save. A reference-distance discrepancy over 5% blocks saving and asks for realignment or corrected units. This is a basic mistake check, not a precision guarantee.
-6. Inspect physical landmarks, then press **X** to enter VR. Walk physically within the system boundary. Press X again for passthrough, or **B** to realign.
+| Button | Action |
+|---|---|
+| Left grip | Menu: View (layers), Fine-tune placement, Change model |
+| Right trigger | Point at an item (a tool, a bench, a duct run) to make it wireframe, or solid again |
+| X | Enter VR / back to passthrough |
+| Y | Hide / show the model |
+| Left stick click | Next design option (e.g. Existing / Renovation) |
 
-After a restart, the app attempts to restore the saved anchor, starting in passthrough. If it cannot localize, **A** retries and **B** starts a new alignment. A changed model or manifest requires realignment. On tracking loss the app returns to passthrough and hides content whose placement cannot be trusted; VR must be explicitly re-entered.
+**Fine-tune placement** (the first row of the View menu) holds everything else about placing the model: the right stick slides the model, the left stick turns and raises it, **B** re-snaps to the QR markers, the right trigger places it with two floor points instead, the right grip measures a floor distance, and the status panel shows each marker and the fit. **A** is done.
 
+A model without QR markers opens straight into floor-point placement: aim at floor reference A and pull the right trigger, then B. Placement is not saved between launches; the QR codes place the model again each time. On tracking loss the app returns to passthrough; VR must be re-entered.
 ## Add the real lab
 
 **In the headset (no rebuild):** copy the `.3dm` into the app's Import folder or pick it with **Browse headset files**, then press the **left grip** to open **Models**, review and confirm. Name two Rhino floor points `LabWalk reference A` / `B` for alignment. See the [import guide](Docs/IMPORT.md), which also describes the prepared architecture-lab file `Handley_B1_16_LabWalk.3dm`.
 
-**Automatic placement (0.3.0):** tape printed QR codes to the walls and add matching `LabWalk marker <ID>` points to the Rhino file; the headset then places the model itself and flags drift. See the [marker guide](Docs/MARKERS.md).
+**Automatic placement:** tape printed QR codes to the walls and add matching `LabWalk marker <ID>` points to the Rhino file; the headset then places the model itself. See the [marker guide](Docs/MARKERS.md).
 
 **Layers, design options and wireframes:** the left grip opens **View**, which shows the Rhino layer tree with **Solid / Wire / Off** for every layer; name layers `Option: Existing` / `Option: Renovation` to make them exclusive design options. Point the right controller at any object and pull the trigger to make just that object a wireframe. See the [layer guide](Docs/LAYERS.md).
 
