@@ -28,6 +28,7 @@ namespace LabWalk
         Camera eye;
         string fingerprint, message="Loading model...", measurement=DefaultMeasurement;
         float messageTime=-100;
+        string notice="";   // heading of the last short message (the status panel's title while placed)
         const string DefaultMeasurement="";
         ControllerGuide guide;
         Vector3 realA, measuredA;
@@ -91,7 +92,7 @@ namespace LabWalk
                 if(!this) { loaded.Dispose(); return; }
                 Adopt(loaded);
                 StartPlacement();
-                if(warning!=null) Notify(warning);
+                if(warning!=null) Notify("Showing the sample model",warning);
             }
             catch(OperationCanceledException) { }
             catch(Exception e) { if(this) { phase=Phase.Error; message=e.Message+" Left grip opens Models."; Debug.LogException(e); } }
@@ -120,7 +121,7 @@ namespace LabWalk
         // ---- Placement: automatic from the QR markers; everything else is behind "Fine-tune placement" ----
 
         // A message shown on the status panel for a few seconds (the panel is otherwise hidden once placed).
-        void Notify(string text) { message=text; messageTime=Time.unscaledTime; }
+        void Notify(string heading,string detail="") { notice=heading; message=detail; messageTime=Time.unscaledTime; }
         bool Notifying => Time.unscaledTime-messageTime<6;
 
         // Places the model from scratch: the camera looks for the QR markers (the model appears when 2 are found);
@@ -136,7 +137,7 @@ namespace LabWalk
             if(markers.Active && !editorPreview)
             {
                 phase=Phase.Searching;
-                message="Look at the QR markers from about 1 m, facing them. The model appears when 2 are found.";
+                message="Face each printed code from about 1 m away. The model appears once two are found.";
             }
             else
             {
@@ -152,8 +153,8 @@ namespace LabWalk
             CloseMenu();
             tuning=true;
             if(!hasPlacement) { phase=Phase.PointA; message="Point at floor reference A and pull the right trigger. B cancels."; }
-            else message=markers.Active ? "Sticks move the model. B re-snaps to the QR markers. Right trigger: place by floor points. A: done."
-                : "Sticks move the model. Right trigger: place by floor points. A: done.";
+            else message=markers.Active ? "Nudge the model with the sticks; B snaps it back to the QR markers. Or mark two floor points with the right trigger."
+                : "Nudge the model with the sticks, or mark two floor points with the right trigger.";
             DiagnosticsLog.Write("Fine-tune placement started");
         }
 
@@ -162,7 +163,7 @@ namespace LabWalk
             tuning=false;
             if(phase==Phase.PointA || phase==Phase.PointB) phase=hasPlacement ? Phase.Placed : Phase.Searching;
             firstMeasure=false;
-            Notify(userAdjusted ? "Placement adjusted by hand. View menu > Fine-tune > B returns to the QR markers." : "Placement unchanged.");
+            Notify(userAdjusted ? "Placement adjusted" : "Placement unchanged",userAdjusted ? "Fine-tune again and press B to return to the QR markers." : "");
             DiagnosticsLog.Write($"Fine-tune done: {DiagnosticsLog.Pose(placement)}; adjusted {userAdjusted}");
         }
 
@@ -205,7 +206,7 @@ namespace LabWalk
         {
             phase=hasPlacement ? Phase.Placed : Phase.PointA;
             message=hasPlacement ? "Floor points cancelled; placement unchanged." : "Point at floor reference A and pull the right trigger.";
-            if(!hasPlacement && markers.Active && !editorPreview) { tuning=false; phase=Phase.Searching; message="Look at the QR markers from about 1 m, facing them."; }
+            if(!hasPlacement && markers.Active && !editorPreview) { tuning=false; phase=Phase.Searching; message="Face each printed code from about 1 m away. The model appears once two are found."; }
         }
         // ---- Menu: View (the model's layer tree), Models (import) and model review, on the MenuPanel ----
 
@@ -277,10 +278,10 @@ namespace LabWalk
             if(phase==Phase.Review && candidate!=null)
             {
                 var m=candidate.Model; var size=m.BoundsMeters.size; var largest=Mathf.Max(size.x,size.y,size.z);
-                menu.Title="Review model: "+candidate.Manifest.displayName;
-                Row($"File: {candidate.Manifest.file}",null,true);
-                Row($"Units: {m.SourceUnits} to meters (true size)",null,true);
-                Row($"Size: {size.x:F2} x {size.y:F2} x {size.z:F2} m (X/Y/Z)",null,true);
+                menu.Title="Review  ›  "+UiStyle.Title(candidate.Manifest.displayName);
+                Row($"File  ·  {candidate.Manifest.file}",null,true);
+                Row($"Units  ·  {m.SourceUnits}, shown at true size",null,true);
+                Row($"Size  ·  {size.x:F2} × {size.z:F2} m, {size.y:F2} m tall",null,true);
                 if(largest>300 || largest<0.3f) Row("CHECK UNITS: this size is unusual for a room.");
                 Lines(m.ImportSummary); Lines(candidate.Notes);
                 if(m.Incomplete) Row("Some geometry could not be imported (see the summary).");
@@ -292,7 +293,7 @@ namespace LabWalk
             }
             if(phase==Phase.Importing)
             {
-                menu.Title="Models";
+                menu.Title="Models  ›  Loading";
                 Lines(message,false);
                 Add(Row(""),"Cancel",MenuPanel.Style.Plain,()=>importCancel?.Cancel());
                 menu.Footer="B: cancel";
@@ -300,9 +301,10 @@ namespace LabWalk
             }
             if(page==Page.Models)
             {
-                menu.Title=$"Models   (current: {manifest?.displayName ?? "none"})";
+                menu.Title="Models";
+                if(manifest!=null) Row("Showing: "+UiStyle.Title(manifest.displayName),null,true);
                 if(layerView!=null && layerView.Any) Row("‹  Back to View",()=>{ page=Page.View; folder=null; ShowMenu(); });
-                if(ModelImport.SystemPickerAvailable) Row("Browse headset files...",StartPicker);
+                if(ModelImport.SystemPickerAvailable) Row("Browse headset files…",StartPicker);
                 foreach(var f in ModelImport.ListImportFiles())
                 {
                     var path=f.FullName;
@@ -314,9 +316,9 @@ namespace LabWalk
                 return;
             }
             // View: one folder of the model's layer tree, as in Rhino.
-            menu.Title=folder==null ? "View" : "View  ›  "+folder.Path.Replace(" > ","  ›  ");
-            if(folder!=null) Row("‹  Back",()=>OpenFolder(folder.Parent));
-            else if(model!=null) Add(Row("Placement: "+PlacementSummary()),"Fine-tune",MenuPanel.Style.Action,StartFineTune);
+            menu.Title=folder==null ? UiStyle.Title(manifest?.displayName ?? "View") : UiStyle.Path(folder.Path);
+            if(folder!=null) Row(folder.Parent==null ? "‹  All layers" : "‹  "+folder.Parent.Name,()=>OpenFolder(folder.Parent));
+            else if(model!=null) Add(Row("Placement  ·  "+PlacementSummary()),"Fine-tune",MenuPanel.Style.Action,StartFineTune);
             foreach(var layer in folder==null ? layerView.Roots : folder.Children)
             {
                 var l=layer;
@@ -333,11 +335,11 @@ namespace LabWalk
             if(folder==null)
             {
                 var pointed=layerView.WireObjectCount;
-                if(pointed>0) Add(Row($"Objects made wireframe by pointing: {pointed}"),"Make all solid",MenuPanel.Style.Plain,()=>{ layerView.ClearObjects(); menuDirty=true; });
-                else if(model!=null && model.Objects.Count>1) Row("Tip: point at an object + right trigger: wireframe",null,true);
-                Row("Change model...",OpenModels);
+                if(pointed>0) Add(Row($"Items shown as wireframe  ·  {pointed}"),"Make all solid",MenuPanel.Style.Plain,()=>{ layerView.ClearObjects(); menuDirty=true; });
+                else if(model!=null && model.Objects.Count>1) Row("Point at an item and pull the right trigger to see through it.",null,true);
+                Row("Change model…",OpenModels);
             }
-            menu.Footer=editorPreview ? "Mouse: point + click   Arrows + Enter   Esc: back" : "Point + right trigger, or stick + A   |   B: back";
+            menu.Footer=editorPreview ? "Mouse: point + click   ·   Arrows + Enter   ·   Esc: back" : "Point + trigger  ·  or stick + A     B: back";
         }
         void StartPicker()
         {
@@ -374,8 +376,8 @@ namespace LabWalk
                 if(!this) { loaded.Dispose(); return; }
                 candidate=loaded; phase=Phase.Review;
             }
-            catch(OperationCanceledException) { if(this) { phase=resumePhase; Notify("Import cancelled. The current model is unchanged."); } }
-            catch(Exception e) { if(this) { phase=resumePhase; Notify("Import failed: "+e.Message+" The current model is unchanged."); Debug.LogException(e); } }
+            catch(OperationCanceledException) { if(this) { phase=resumePhase; Notify("Import cancelled","The current model is unchanged."); } }
+            catch(Exception e) { if(this) { phase=resumePhase; Notify("Import failed",e.Message+" The current model is unchanged."); Debug.LogException(e); } }
             finally { importCancel?.Dispose(); importCancel=null; busy=false; }
         }
 
@@ -398,7 +400,7 @@ namespace LabWalk
             catch(OperationCanceledException) { }
             catch(Exception e)
             {
-                if(this) { candidate=null; next.Dispose(); phase=resumePhase; Notify("Could not save the selection: "+e.Message+" The current model is unchanged."); Debug.LogException(e); }
+                if(this) { candidate=null; next.Dispose(); phase=resumePhase; Notify("Could not switch models",e.Message+" The current model is unchanged."); Debug.LogException(e); }
             }
             finally { busy=false; }
         }
@@ -406,7 +408,7 @@ namespace LabWalk
         void CancelReview()
         {
             candidate?.Dispose(); candidate=null;
-            phase=resumePhase; Notify("Import cancelled. The current model is unchanged.");
+            phase=resumePhase; Notify("Import cancelled","The current model is unchanged.");
         }
 
         void HandleModelUi(bool accept,bool back,bool press,bool pin,Ray pointer,bool pointerTracked)
@@ -503,7 +505,7 @@ namespace LabWalk
 
         void UpdatePicking(Ray ray,bool tracked,bool click)
         {
-            if(!CanPick || !tracked) { SetHover(0); clickPending=false; view.Hover(null,default,false); return; }
+            if(!CanPick || !tracked) { SetHover(0); clickPending=false; view.Hover(null,null,null,default,false); return; }
             if(click) { clickPending=true; nextPick=0; }
             if(picker.Version!=pickVersion)
             {
@@ -516,17 +518,17 @@ namespace LabWalk
                     if(o!=null)
                     {
                         layerView.ToggleObject(hoverIndex);
-                        Notify(layerView.IsObjectWire(hoverIndex) ? $"{o.Label}: wireframe. Point + trigger again for solid; View menu: Make all solid."
-                            : $"{o.Label}: solid again.");
+                        Notify(layerView.IsObjectWire(hoverIndex) ? "Wireframe" : "Solid again",
+                            layerView.IsObjectWire(hoverIndex) ? o.Label+"\nPoint at it again to make it solid." : o.Label);
                     }
                 }
             }
             if(!picker.Busy && Time.unscaledTime>=nextPick) { nextPick=Time.unscaledTime+0.08f; picker.Request(ray,pickRenderers); }
             var hovered=layerView.Object(hoverIndex);
-            if(hovered==null) { view.Hover(null,default,false); return; }
+            if(hovered==null) { view.Hover(null,null,null,default,false); return; }
             var at=picker.HasDistance ? picker.Ray.GetPoint(picker.Distance) : ray.GetPoint(1.5f);
-            var name=string.IsNullOrEmpty(hovered.Name) ? "(unnamed object)" : hovered.Name;
-            view.Hover($"{name}\n{hovered.Layer?.Path}\nTrigger: {(layerView.IsObjectWire(hoverIndex) ? "make solid" : "make wireframe")}",at,true);
+            var name=string.IsNullOrEmpty(hovered.Name) ? (hovered.Layer?.Name ?? "Unnamed item") : hovered.Name;
+            view.Hover(name,UiStyle.Path(hovered.Layer?.Path),layerView.IsObjectWire(hoverIndex) ? "wireframe" : null,at,true);
         }
 
         void SetHover(int index)
@@ -578,7 +580,7 @@ namespace LabWalk
                 var anchorMoved=sessionAnchor ? Vector3.Distance(sessionAnchor.transform.position,lastAnchorPosition) : 0;
                 var originJumped=maxHeadStep>0.05f || maxHeadTurn>3;
                 DiagnosticsLog.Write($"Recenter settled: largest one-frame head step {maxHeadStep*100:F1} cm / {maxHeadTurn:F1} deg (origin jump: {originJumped}); anchor moved {anchorMoved*100:F1} cm; placement {DiagnosticsLog.Pose(placement)}; anchor {DiagnosticsLog.Pose(sessionAnchor ? sessionAnchor.transform : null)}");
-                if(originJumped) Notify("View recentered. The model stays locked to the room; the QR markers re-check it.");
+                if(originJumped) Notify("View recentered","The model stays locked to the room.");
             }
             if(recenterFollowUp<0)
             {
@@ -600,7 +602,7 @@ namespace LabWalk
             if((!trackingHealthy || !anchorTracked) && view.Immersive)
             {
                 view.SetImmersive(false);
-                Notify("Tracking interrupted. Check the model against the room before entering VR again.");
+                Notify("Tracking interrupted","Back to passthrough. Check the model against the room before entering VR again.");
             }
             if(editorPreview) MoveDesktopCamera();
             var ray=editorPreview ? eye.ScreenPointToRay(Mouse.current==null ? new Vector2(Screen.width/2f,Screen.height/2f) : Mouse.current.position.ReadValue())
@@ -658,7 +660,7 @@ namespace LabWalk
                     {
                         var next=layerView.NextOption(layerView.OptionGroups[0]);
                         layerView.Set(next,LayerView.Display.Solid);
-                        Notify($"Showing {layerView.OptionGroups[0]}: {next.Name}");
+                        Notify(next.Name,$"{layerView.OptionGroups[0]} option shown.");
                     }
                     if(trigger) pickClick=true;
                     if(toggle && anchorTracked) { view.SetImmersive(!view.Immersive); showModel=true; }
@@ -690,7 +692,7 @@ namespace LabWalk
                     }
                 view.EndMarkers();
             }
-            if(menu.Visible) view.UpdatePanel(null,false); // the menu panel replaces the status panel while open
+            if(menu.Visible) view.UpdatePanel(null,null,null,false); // the menu panel replaces the status panel while open
             else if(Time.unscaledTime>=panelTime)
             {
                 panelTime=Time.unscaledTime+0.15f;
@@ -698,23 +700,23 @@ namespace LabWalk
                 // fine-tuning show what is needed for that.
                 var problem=!trackingHealthy || !anchorTracked || phase==Phase.Error || (model?.Incomplete ?? false);
                 var placing=phase!=Phase.Placed || tuning;
+                var heading=placing ? PhaseName() : Notifying ? notice : !trackingHealthy ? "Tracking unavailable" : !anchorTracked ? "Room lock lost" : "Import incomplete";
                 var text=new StringBuilder();
-                if(placing) text.Append($"{manifest?.displayName ?? "LAB WALK"}  |  {PhaseName()}\n");
-                if(placing || Notifying || phase==Phase.Error) text.Append(Wrap(message,52)).Append('\n');
-                if(!trackingHealthy) text.Append("Headset tracking unavailable.\n");
-                else if(!anchorTracked) text.Append("The room lock for the model is lost; look around the room.\n");
-                if(model?.Incomplete ?? false) text.Append("Some geometry could not be imported (see the Models review).\n");
-                if(markers.Active && (phase==Phase.Searching || tuning)) text.Append(Wrap(markers.Status,52)).Append('\n');
+                if((placing || Notifying) && !string.IsNullOrEmpty(message)) text.Append(Wrap(message,46)).Append('\n');
+                if(!trackingHealthy) text.Append("Headset tracking is unavailable.\n");
+                else if(!anchorTracked) text.Append("The model's room lock is lost. Look around the room.\n");
+                if(model?.Incomplete ?? false) text.Append("Some geometry could not be imported.\n");
+                if(markers.Active && (phase==Phase.Searching || tuning)) text.Append('\n').Append(markers.Checklist()).Append('\n');
                 if(tuning)
                 {
-                    text.Append("Placement: ").Append(PlacementSummary()).Append('\n');
-                    if(placedByFloorPoints) text.Append($"Floor points: model {alignment.ModelBaselineMeters:F3} m / room {alignment.PhysicalBaselineMeters:F3} m\n");
+                    text.Append("\nPlacement  ·  ").Append(PlacementSummary()).Append('\n');
+                    if(placedByFloorPoints) text.Append($"Floor points  ·  model {alignment.ModelBaselineMeters:F2} m, room {alignment.PhysicalBaselineMeters:F2} m\n");
                     if(measurement!=DefaultMeasurement) text.Append(measurement).Append('\n');
-                    text.Append($"{1f/averageFrameTime:F0} FPS");
+                    if(markers.Active) text.Append(markers.HasSolution ? $"QR fit  ·  {markers.Solution.RmsResidualMeters*100:F1} cm rms\n" : "").Append(Wrap(markers.CameraStatus,60)).Append('\n');
                 }
                 if(editorPreview)
-                    text.Append("\n\nClick: point | Enter: done | R: re-snap | O: menu | V: VR | H: hide model | M: measure | Tab: help\nWASD/QE: camera | right mouse: look | arrows: nudge | Z/C: yaw | PageUp/PageDown: height");
-                view.UpdatePanel(text.ToString().TrimEnd(),placing || Notifying || problem);
+                    text.Append("\nClick: point · Enter: done · R: re-snap · O: menu · V: VR · H: hide · M: measure · Tab: labels\nWASD/QE: move · right mouse: look · arrows: nudge · Z/C: turn · PgUp/PgDn: raise");
+                view.UpdatePanel(UiStyle.Title(manifest?.displayName),heading,text.ToString().TrimEnd(),placing || Notifying || problem);
             }
         }
         // ---- Session anchor: world-locks the placement for this session ----
@@ -803,7 +805,7 @@ namespace LabWalk
             if(!placement.parent) AnchorPlacementForSession();
             var warning=fit.MaxResidualMeters>0.05 ? $" The markers disagree by up to {fit.MaxResidualMeters*100:F0} cm: check their measured positions." :
                 fit.RelativeBaselineError>0.05 ? " Marker spacing differs >5% from the model: check units and measurements." : "";
-            if(announce) Notify($"Placed from {markers.SolutionMarkerCount} QR markers (fit {fit.RmsResidualMeters*100:F1} cm).{warning}");
+            if(announce) Notify("Model placed",$"From {markers.SolutionMarkerCount} QR markers, fit {fit.RmsResidualMeters*100:F1} cm.{warning}");
             if(announce) DiagnosticsLog.Write($"Placed from markers: {DiagnosticsLog.Pose(placement)}; rms {fit.RmsResidualMeters*100:F1} cm");
         }
         // ---- Controller tooltips: labels describe what each button does in the current state ----
@@ -819,17 +821,17 @@ namespace LabWalk
                 else
                 {
                     guide.Set(ControllerGuide.Control.A,"Press");
-                    guide.Set(ControllerGuide.Control.RightTrigger,"Press (point)");
+                    guide.Set(ControllerGuide.Control.RightTrigger,"Press");
                     guide.Set(ControllerGuide.Control.Y,menu.Pinned ? "Menu to hand" : "Pin menu here");
                     var top=page==Page.View ? folder==null : !(layerView!=null && layerView.Any);
                     guide.Set(ControllerGuide.Control.B,top ? "Close" : "Back");
-                    guide.Set(ControllerGuide.Control.RightStick,"Move"); guide.Set(ControllerGuide.Control.LeftStick,"Move");
+                    guide.Set(ControllerGuide.Control.RightStick,"Choose"); guide.Set(ControllerGuide.Control.LeftStick,"Choose");
                 }
-                if(phase==Phase.Review) guide.Set(ControllerGuide.Control.RightTrigger,"Press (point)");
+                if(phase==Phase.Review) guide.Set(ControllerGuide.Control.RightTrigger,"Press");
                 return;
             }
-            guide.Set(ControllerGuide.Control.Menu,"Hide help");
-            if(!busy) guide.Set(ControllerGuide.Control.LeftGrip,layerView!=null && layerView.Any ? "View / models" : "Models");
+            guide.Set(ControllerGuide.Control.Menu,"Hide labels");
+            if(!busy) guide.Set(ControllerGuide.Control.LeftGrip,"Menu");
             if(busy || model==null || phase==Phase.Error) return;
             var passthrough=!view.Immersive;
             if(hasPlacement && passthrough) guide.Set(ControllerGuide.Control.Y,showModel ? "Hide model" : "Show model");
@@ -839,14 +841,14 @@ namespace LabWalk
                 if(!(floorPoints && !hasPlacement)) guide.Set(ControllerGuide.Control.A,"Done");
                 if(floorPoints) guide.Set(ControllerGuide.Control.B,"Cancel floor points");
                 else if(markers.HasSolution) guide.Set(ControllerGuide.Control.B,"Re-snap to QR markers");
-                guide.Set(ControllerGuide.Control.RightTrigger,phase==Phase.PointB ? "Floor point B" : "Floor point A");
+                guide.Set(ControllerGuide.Control.RightTrigger,phase==Phase.PointB ? "Mark floor point B" : "Mark floor point A");
                 guide.Set(ControllerGuide.Control.RightGrip,firstMeasure ? "Measure: end point" : "Measure floor");
                 if(phase==Phase.Placed) { guide.Set(ControllerGuide.Control.RightStick,"Slide model"); guide.Set(ControllerGuide.Control.LeftStick,"Turn / raise"); }
                 return;
             }
             if(phase!=Phase.Placed) return;
             guide.Set(ControllerGuide.Control.X,passthrough ? "Enter VR" : "Passthrough");
-            if(layerView!=null && layerView.OptionGroups.Count>0) guide.Set(ControllerGuide.Control.LeftStick,"Click: "+layerView.NextOption(layerView.OptionGroups[0]).Name);
+            if(layerView!=null && layerView.OptionGroups.Count>0) guide.Set(ControllerGuide.Control.LeftStick,"Click: show "+layerView.NextOption(layerView.OptionGroups[0]).Name);
             if(CanPick && hoverIndex>0) guide.Set(ControllerGuide.Control.RightTrigger,layerView.IsObjectWire(hoverIndex) ? "Make solid" : "Make wireframe");
         }
 
@@ -854,10 +856,12 @@ namespace LabWalk
         {
             switch(phase)
             {
-                case Phase.Searching: return "Finding QR markers";
+                case Phase.Loading: return "Loading the model";
+                case Phase.Searching: return markers.FoundCount==0 ? "Finding the QR markers" : $"Found {markers.FoundCount} of {markers.Count} markers";
                 case Phase.PointA: return "Floor point A";
                 case Phase.PointB: return "Floor point B";
                 case Phase.Placed: return tuning ? "Fine-tune placement" : view.Immersive ? "VR" : "Placed";
+                case Phase.Error: return "Could not load the model";
                 default: return phase.ToString();
             }
         }

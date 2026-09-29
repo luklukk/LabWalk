@@ -18,7 +18,7 @@ namespace LabWalk
             public float Row;
             public Transform Node, Label;
             public TextMesh Text;
-            public Transform Backing;
+            public Transform Backing, Accent;
             public LineRenderer Line;
             public string Shown;
         }
@@ -41,7 +41,9 @@ namespace LabWalk
         {
             this.eye=eye; this.leftAnchor=leftAnchor; this.rightAnchor=rightAnchor;
             var font=Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-            var backingMaterial=new Material(Shader.Find("Unlit/Color")) {color=new Color(0.025f,0.04f,0.055f)};
+            // Drawing-tag look (UiStyle): ink backing, paper text, a thin orange strip on the side facing the controller.
+            var backingMaterial=new Material(Shader.Find("Unlit/Color")) {color=UiStyle.Ink};
+            var accentMaterial=new Material(Shader.Find("Unlit/Color")) {color=UiStyle.Accent};
             foreach(var (control,left,suffix,row) in Layout)
             {
                 var tip=new Tip {Control=control,Left=left,NodeSuffix=suffix,Row=row};
@@ -49,18 +51,23 @@ namespace LabWalk
                 var textObject=new GameObject("Text"); textObject.transform.SetParent(tip.Label,false);
                 tip.Text=textObject.AddComponent<TextMesh>();
                 tip.Text.font=font; textObject.GetComponent<MeshRenderer>().sharedMaterial=font.material;
-                tip.Text.fontSize=48; tip.Text.characterSize=TextHeight*10/48; tip.Text.color=Color.white; tip.Text.richText=false;
+                tip.Text.fontSize=48; tip.Text.characterSize=TextHeight*10/48; tip.Text.color=UiStyle.Paper; tip.Text.richText=false;
                 tip.Text.anchor=left ? TextAnchor.MiddleRight : TextAnchor.MiddleLeft;
                 var back=GameObject.CreatePrimitive(PrimitiveType.Quad);
                 Object.Destroy(back.GetComponent<Collider>());
                 back.name="Backing"; back.transform.SetParent(tip.Label,false);
                 back.GetComponent<Renderer>().sharedMaterial=backingMaterial;
                 tip.Backing=back.transform;
+                var accent=GameObject.CreatePrimitive(PrimitiveType.Quad);
+                Object.Destroy(accent.GetComponent<Collider>());
+                accent.name="Accent"; accent.transform.SetParent(tip.Label,false);
+                accent.GetComponent<Renderer>().sharedMaterial=accentMaterial;
+                tip.Accent=accent.transform;
                 tip.Line=new GameObject("Leader").AddComponent<LineRenderer>();
                 tip.Line.transform.SetParent(tip.Label,false);
                 tip.Line.sharedMaterial=lineMaterial; tip.Line.positionCount=2; tip.Line.useWorldSpace=true;
                 tip.Line.startWidth=tip.Line.endWidth=0.0012f;
-                tip.Line.startColor=tip.Line.endColor=new Color(0.85f,0.9f,1f,0.9f);
+                tip.Line.startColor=tip.Line.endColor=new Color(UiStyle.Rule.r,UiStyle.Rule.g,UiStyle.Rule.b,0.95f);
                 tip.Label.gameObject.SetActive(false);
                 tips.Add(tip);
             }
@@ -85,8 +92,10 @@ namespace LabWalk
                 {
                     tip.Shown=text; tip.Text.text=text;
                     var size=tip.Text.GetComponent<Renderer>().localBounds.size;
-                    tip.Backing.localScale=new Vector3(size.x+0.006f,size.y+0.003f,1);
+                    tip.Backing.localScale=new Vector3(size.x+0.008f,size.y+0.004f,1);
                     tip.Backing.localPosition=new Vector3((tip.Left ? -1 : 1)*size.x/2,0,0.0005f);
+                    tip.Accent.localScale=new Vector3(0.0012f,size.y+0.004f,1);
+                    tip.Accent.localPosition=new Vector3((tip.Left ? 1 : -1)*0.0046f,0,0.0003f);
                 }
                 var side=tip.Left ? -1f : 1f;
                 var position=anchor.TransformPoint(new Vector3(side*ColumnOffset,tip.Row,0));

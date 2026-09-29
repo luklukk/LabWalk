@@ -16,7 +16,7 @@ Added in 0.3.0. Since 0.6.0, Lab Walk reads the codes from the passthrough camer
 6. **Fine-tune placement** (first row of the View menu) shows each marker's status and the fit, lets the sticks nudge the model, and **B** re-snaps to the markers.
 **Scanning tips:** stand about 0.5 to 1.5 m from a code and roughly face it (within about 35 degrees). Hold still for a second or two. Good light helps. In desktop tests the 3D position is within about 1 cm up to 1.2 m and 1 to 2 cm at 2 m, before averaging. Codes turned more than about 40 degrees away are not found.
 
-While placing or fine-tuning, a **magenta cross** marks where the placed model expects each code and a **cyan cross** where the camera sees it. When they coincide on the paper, the placement is right.
+While placing or fine-tuning, an **orange cross** marks where the placed model expects each code and a **blue cross** where the camera sees it. When they coincide on the paper, the placement is right.
 
 The app asks for **headset camera** access (`horizonos.permission.HEADSET_CAMERA`) the first time it looks for markers. Camera frames are only processed on the headset, in memory, and are never stored or sent anywhere. The app does not need a room scan (Space Setup).
 

@@ -32,18 +32,18 @@ namespace LabWalk
         public const int PinRow=-2;                // Hit's row for the title-bar pin button
         const float HandScale=0.55f;
 
-        const float Width=0.70f, RowHeight=0.056f, TitleHeight=0.07f, FooterHeight=0.05f, Margin=0.022f;
+        const float Width=0.70f, RowHeight=0.056f, TitleHeight=0.105f, FooterHeight=0.05f, Margin=0.022f;
         const float LabelTextHeight=0.026f, ButtonTextHeight=0.021f, ButtonHeight=0.042f;
-        const int MaxRows=9, FontSize=64;
-        static readonly Color Background=new Color(0.03f,0.045f,0.06f), RowFocus=new Color(0.13f,0.19f,0.26f), FocusOutline=new Color(0.55f,0.85f,1f);
+        const int MaxRows=9, FontSize=UiStyle.FontSize;
+        static readonly Color Background=UiStyle.Ink, RowFocus=UiStyle.InkRaised, FocusOutline=UiStyle.Pointer;
 
         readonly Transform root;
         readonly Font font;
         readonly Material fontMaterial;
         readonly Shader overlay;
         readonly Dictionary<(Color,int),Material> materials=new Dictionary<(Color,int),Material>();
-        readonly Transform background;
-        readonly TextMesh title, footer;
+        readonly Transform background, border, rule, tickLeft, tickRight, footerRule;
+        readonly TextMesh brand, title, footer;
         readonly List<MeshRenderer> quads=new List<MeshRenderer>();
         readonly List<TextMesh> texts=new List<TextMesh>();
         int first, quadsUsed, textsUsed;
@@ -59,8 +59,17 @@ namespace LabWalk
             // Text on top of everything too: the built-in text shader honors unity_GUIZTestMode.
             fontMaterial=new Material(font.material) {renderQueue=4010};
             fontMaterial.SetInt("unity_GUIZTestMode",(int)CompareFunction.Always);
+            // Drawing-sheet frame: thin border, brand line, title, and a rule with 45° ticks like a dimension line.
+            border=CreateQuad("Border",UiStyle.Rule,3999).transform;
+            border.localPosition=new Vector3(0,0,0.011f);
             background=CreateQuad("Background",Background,4000).transform;
             background.localPosition=new Vector3(0,0,0.01f);
+            rule=CreateQuad("Title rule",UiStyle.Rule,4001).transform;
+            tickLeft=CreateQuad("Title rule tick",UiStyle.Rule,4001).transform;
+            tickRight=CreateQuad("Title rule tick",UiStyle.Rule,4001).transform;
+            footerRule=CreateQuad("Footer rule",UiStyle.Rule,4001).transform;
+            brand=CreateText("Brand",0.017f);
+            brand.text=UiStyle.Spaced("Lab Walk"); brand.color=UiStyle.Accent; brand.anchor=TextAnchor.MiddleLeft;
             title=CreateText("Title",LabelTextHeight*1.05f);
             footer=CreateText("Footer",ButtonTextHeight*0.9f);
             root.gameObject.SetActive(false);
@@ -148,16 +157,23 @@ namespace LabWalk
             var shown=Mathf.Min(MaxRows,Rows.Count);
             height=TitleHeight+shown*RowHeight+FooterHeight+Margin;
             var top=height/2;
-            background.localScale=new Vector3(Width,height,1);
+            background.localScale=new Vector3(Width-0.004f,height-0.004f,1);
+            border.localScale=new Vector3(Width,height,1);
+            brand.transform.localPosition=new Vector3(-Width/2+Margin,top-0.024f,0);
+            var ruleY=top-TitleHeight+0.008f;
+            rule.localPosition=new Vector3(0,ruleY,0.004f); rule.localScale=new Vector3(Width-2*Margin,0.0022f,1);
+            foreach(var (tick,x) in new[]{(tickLeft,-Width/2+Margin),(tickRight,Width/2-Margin)})
+            { tick.localPosition=new Vector3(x,ruleY,0.004f); tick.localRotation=Quaternion.Euler(0,0,45); tick.localScale=new Vector3(0.003f,0.02f,1); }
+            footerRule.localPosition=new Vector3(0,-top+FooterHeight+Margin/3-0.004f,0.004f); footerRule.localScale=new Vector3(Width-2*Margin,0.0012f,1);
             quadsUsed=textsUsed=0; targets.Clear();
             // Title-bar button: pin in the room / back to the hand.
             var pinText=Pinned ? "To hand" : "Pin here";
-            pinRect=new Rect(Width/2-Margin-0.12f,top-TitleHeight/2-ButtonHeight/2,0.12f,ButtonHeight);
+            pinRect=new Rect(Width/2-Margin-0.12f,top-0.06f-ButtonHeight/2,0.12f,ButtonHeight);
             if(PinFocused) PlaceQuad(pinRect.center.x,pinRect.center.y,pinRect.width+0.01f,pinRect.height+0.01f,FocusOutline,4002);
             PlaceQuad(pinRect.center.x,pinRect.center.y,pinRect.width,pinRect.height,Colors(Style.Plain).fill,4003);
             SetText(NextText(ButtonTextHeight),pinText,pinRect.center.x,pinRect.center.y,TextAnchor.MiddleCenter,Colors(Style.Plain).ink,pinRect.width-0.008f);
-            SetText(title,Title+(Rows.Count>MaxRows ? $"   ({first+1}-{first+shown} of {Rows.Count})" : ""),-Width/2+Margin,top-TitleHeight/2,TextAnchor.MiddleLeft,Color.white,Width-2*Margin-0.13f);
-            SetText(footer,Footer,-Width/2+Margin,-top+FooterHeight/2+Margin/3,TextAnchor.MiddleLeft,new Color(0.65f,0.72f,0.8f),Width-2*Margin);
+            SetText(title,Title+(Rows.Count>MaxRows ? $"   ({first+1}-{first+shown} of {Rows.Count})" : ""),-Width/2+Margin,top-0.06f,TextAnchor.MiddleLeft,UiStyle.Paper,Width-2*Margin-0.13f);
+            SetText(footer,Footer,-Width/2+Margin,-top+FooterHeight/2+Margin/3,TextAnchor.MiddleLeft,UiStyle.Muted,Width-2*Margin);
             for(int i=0;i<shown;i++)
             {
                 var index=first+i; var row=Rows[index];
@@ -179,7 +195,7 @@ namespace LabWalk
                 var labelWidth=x-labelLeft-0.01f;
                 if(row.Open!=null) targets.Add((index,-1,new Rect(-Width/2,y-RowHeight/2,x+Width/2,RowHeight)));
                 if(focused && FocusColumn<0 && row.Open!=null) PlaceQuad(labelLeft+labelWidth/2,y,labelWidth+0.016f,ButtonHeight+0.008f,FocusOutline,4002,0.35f);
-                SetText(NextText(LabelTextHeight),row.Label,labelLeft,y,TextAnchor.MiddleLeft,row.Dim ? new Color(0.7f,0.75f,0.8f) : Color.white,labelWidth);
+                SetText(NextText(LabelTextHeight),row.Label,labelLeft,y,TextAnchor.MiddleLeft,row.Dim ? UiStyle.Muted : UiStyle.Paper,labelWidth);
                 for(int b=0;b<row.Buttons.Count;b++)
                 {
                     var button=row.Buttons[b]; var r=rects[b];
@@ -198,11 +214,11 @@ namespace LabWalk
         {
             switch(style)
             {
-                case Style.Solid: return (new Color(0.86f,0.88f,0.9f),new Color(0.04f,0.05f,0.06f));
-                case Style.Wire: return (Rhino3dmModelLoader.WireColor,new Color(0.08f,0.04f,0f));
-                case Style.Off: return (new Color(0.36f,0.38f,0.42f),Color.white);
-                case Style.Action: return (new Color(0.16f,0.42f,0.66f),Color.white);
-                default: return (new Color(0.1f,0.13f,0.16f),new Color(0.62f,0.68f,0.74f));
+                case Style.Solid: return (UiStyle.Paper,UiStyle.Ink);
+                case Style.Wire: return (UiStyle.Accent,new Color(0.08f,0.04f,0f));
+                case Style.Off: return (new Color(0.34f,0.36f,0.39f),UiStyle.Paper);
+                case Style.Action: return (new Color(0.17f,0.33f,0.45f),UiStyle.Paper);
+                default: return (UiStyle.InkRaised,UiStyle.Muted);
             }
         }
 
@@ -233,7 +249,7 @@ namespace LabWalk
             var go=new GameObject(name);
             go.transform.SetParent(root,false);
             var text=go.AddComponent<TextMesh>();
-            text.font=font; text.fontSize=FontSize; text.characterSize=textHeight*10/FontSize; text.richText=false;
+            text.font=font; text.fontSize=FontSize; text.characterSize=textHeight*10/FontSize; text.richText=false; text.color=UiStyle.Paper;
             go.GetComponent<MeshRenderer>().sharedMaterial=fontMaterial;
             return text;
         }

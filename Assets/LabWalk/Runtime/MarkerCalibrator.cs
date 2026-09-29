@@ -130,6 +130,29 @@ namespace LabWalk
                 yield return (placement.TransformPoint(m.position),tracks.TryGetValue(m.id,out var t) && t.Used>0 ? t.Mean : (Vector3?)null);
         }
 
+        // For the status panel while placing: each code, whether it is found, and how high to look for it,
+        // e.g. "●  LW1   5' up        ○  LW2   5' up        ○  LW3   3' up  (2/5)".
+        public string Checklist()
+        {
+            return string.Join("        ",markers.Select(m =>
+            {
+                tracks.TryGetValue(m.id,out var t);
+                var found=t!=null && t.Steady;
+                var progress=t!=null && !found && t.Used>0 ? $"  ({t.Used}/{MinSamples})" : "";
+                return $"{(found ? "●" : "○")}  {m.id}   {Feet(m.position.y)} up{progress}";
+            }));
+        }
+
+        static string Feet(float meters)
+        {
+            var inches=Mathf.RoundToInt(meters/0.0254f);
+            return inches%12==0 ? $"{inches/12}'" : $"{inches/12}' {inches%12}\"";
+        }
+
+        public int FoundCount => markers.Count(m=>tracks.TryGetValue(m.id,out var t) && t.Steady);
+        public int Count => markers.Length;
+        public string CameraStatus => scanner.Status;
+
         string Describe()
         {
             var now=Time.realtimeSinceStartup;
