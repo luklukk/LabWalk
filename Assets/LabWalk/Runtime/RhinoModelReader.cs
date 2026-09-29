@@ -27,9 +27,11 @@ namespace LabWalk
         public readonly Dictionary<string,float[]> Markers=new Dictionary<string,float[]>();
         // The layer tree as switchable nodes ("Option: [<group> /] <name>" layers are exclusive; see LayerGroupNames).
         public readonly List<RhinoLayerGroup> Groups=new List<RhinoLayerGroup>();
-        // Top-level Rhino objects (a block instance counts as one), for pointing at them in the app. Index 0 is
-        // reserved for "no object"; every mesh and line vertex carries its object's index (ObjectIds).
+        // Items to point at in the app (a tool, a duct run, a wall): a Rhino group; else all parts on one layer
+        // named "<item> / <part>"; else a single top-level object (a block instance counts as one). Index 0 is
+        // reserved for "no item"; every mesh and line vertex carries its item's index (ObjectIds).
         public readonly List<RhinoObjectInfo> Objects=new List<RhinoObjectInfo>{ null };
+        public const string PartSeparator=" / ";
         // Feature edges (outlines and creases) of geometry on switchable layers, for their wireframe display.
         public readonly List<RhinoLineData> Lines=new List<RhinoLineData>();
         public string Summary => $"3DM: {Meshes.Count} meshes, {Triangles:N0} triangles; {Units} to meters. " +
@@ -53,9 +55,10 @@ namespace LabWalk
 
     public sealed class RhinoObjectInfo
     {
-        public string Id;    // Rhino object GUID
-        public string Name;  // object name, else block name; may be empty
-        public int Group=-1; // layer node of the object itself
+        public string Id;    // stable key: "group:<name>", "name:<layer path>|<item>", or the Rhino object GUID
+        public string Name;  // group name, item name, object name, or block name; may be empty
+        public int Group=-1; // layer node of the (first) object
+        public int Parts;    // top-level Rhino objects in the item
     }
 
     // Line segments (pairs of indices into Positions) in final Unity-local meters.
@@ -234,6 +237,43 @@ namespace LabWalk
                 return result;
             }
 
+            readonly Dictionary<string,int> itemByKey=new Dictionary<string,int>();
+
+            // The item a top-level object belongs to (see RhinoModelData.Objects), created on first use.
+            int ItemIndex(File3dmObject obj,int group)
+            {
+                var name=obj.Attributes.Name;
+                string key, label;
+                var groups=obj.Attributes.GroupCount>0 ? obj.Attributes.GetGroupList() : null;
+                var split=string.IsNullOrEmpty(name) ? -1 : name.IndexOf(RhinoModelData.PartSeparator,StringComparison.Ordinal);
+                if(groups!=null && groups.Length>0)
+                {
+                    var first=groups[0]; foreach(var g in groups) first=Math.Min(first,g);
+                    var rhinoGroup=file.AllGroups.FindIndex(first);
+                    label=string.IsNullOrEmpty(rhinoGroup?.Name) ? (split>0 ? name.Substring(0,split).Trim() : name) : rhinoGroup.Name;
+                    key="group:"+(rhinoGroup?.Id.ToString() ?? first.ToString());
+                }
+                else if(split>0)
+                {
+                    label=name.Substring(0,split).Trim();
+                    key="name:"+(group>=0 ? data.Groups[group].LayerPath : "")+"|"+label;
+                }
+                else
+                {
+                    label=name;
+                    if(string.IsNullOrEmpty(label) && obj.Geometry is InstanceReferenceGeometry reference) label=file.AllInstanceDefinitions.FindId(reference.ParentIdefId)?.Name;
+                    key=obj.Id.ToString();
+                }
+                if(!itemByKey.TryGetValue(key,out var index))
+                {
+                    index=data.Objects.Count;
+                    data.Objects.Add(new RhinoObjectInfo {Id=key,Name=label ?? "",Group=group});
+                    itemByKey.Add(key,index);
+                }
+                data.Objects[index].Parts++;
+                return index;
+            }
+
             System.Drawing.Color Color(ObjectAttributes a,System.Drawing.Color? parent)
             {
                 if(a.MaterialSource==ObjectMaterialSource.MaterialFromParent && parent.HasValue) return parent.Value;
@@ -280,13 +320,7 @@ namespace LabWalk
                 if(ownGroup>=0 && (depth==0 || ownMarked)) group=ownGroup;
                 var color=Color(obj.Attributes,parent);
                 var name=string.IsNullOrEmpty(obj.Attributes.Name) ? obj.Id.ToString() : obj.Attributes.Name;
-                if(objectIndex==0)
-                {
-                    var label=obj.Attributes.Name;
-                    if(string.IsNullOrEmpty(label) && geometry is InstanceReferenceGeometry reference) label=file.AllInstanceDefinitions.FindId(reference.ParentIdefId)?.Name;
-                    objectIndex=data.Objects.Count;
-                    data.Objects.Add(new RhinoObjectInfo {Id=obj.Id.ToString(),Name=label ?? "",Group=group});
-                }
+                if(objectIndex==0) objectIndex=ItemIndex(obj,group);
                 if(geometry is InstanceReferenceGeometry instance)
                 {
                     if(depth>=32 || !stack.Add(instance.ParentIdefId))

@@ -5,10 +5,11 @@ using UnityEngine.Rendering;
 
 namespace LabWalk
 {
-    // The menu (View layers, Models, model review): a large panel floating in front of the user, drawn on top
-    // of the model. Each row has a label and optional buttons; the View rows' buttons are Solid / Wire / Off
-    // with the current one lit, plus "›" to open a folder. Rows are chosen by pointing with the right controller
-    // or with the sticks; the focused row and button are highlighted.
+    // The menu (View layers, Models, model review), drawn on top of the model. It rides above the left
+    // controller; its title-bar button (or Y) pins it in the room at eye level, where it stays put until it is
+    // sent back to the hand. Each row has a label and optional buttons; the View rows' buttons are Solid / Wire /
+    // Off with the current one lit, plus "›" to open a folder. Rows are chosen by pointing with the right
+    // controller or with the sticks; the focused row and button are highlighted.
     public sealed class MenuPanel
     {
         public enum Style { Plain, Solid, Wire, Off, Action }
@@ -26,6 +27,10 @@ namespace LabWalk
         public readonly List<Row> Rows=new List<Row>();
         public int FocusRow, FocusColumn; // column -1 = the label
         public bool Visible { get; private set; }
+        public bool Pinned { get; private set; }  // placed in the room instead of riding on the hand
+        public bool PinFocused;                    // the title-bar pin button is pointed at
+        public const int PinRow=-2;                // Hit's row for the title-bar pin button
+        const float HandScale=0.55f;
 
         const float Width=0.70f, RowHeight=0.056f, TitleHeight=0.07f, FooterHeight=0.05f, Margin=0.022f;
         const float LabelTextHeight=0.026f, ButtonTextHeight=0.021f, ButtonHeight=0.042f;
@@ -43,7 +48,8 @@ namespace LabWalk
         readonly List<TextMesh> texts=new List<TextMesh>();
         int first, quadsUsed, textsUsed;
         readonly List<(int row,int column,Rect rect)> targets=new List<(int,int,Rect)>();
-        float height;
+        Rect pinRect;
+        float height=0.4f;
 
         public MenuPanel()
         {
@@ -60,25 +66,30 @@ namespace LabWalk
             root.gameObject.SetActive(false);
         }
 
-        // Puts the panel in front of the head (slightly below eye level), facing it.
-        public void Place(Transform head)
+        // Pins the panel in the room in front of the head at eye level, upright and facing it. It stays there.
+        public void Pin(Transform head)
         {
             var forward=Vector3.ProjectOnPlane(head.forward,Vector3.up);
             if(forward.sqrMagnitude<1e-4f) forward=Vector3.ProjectOnPlane(head.up,Vector3.up);
             forward.Normalize();
-            var position=head.position+forward*0.62f-Vector3.up*0.1f;
+            var position=head.position+forward*0.62f;
+            root.localScale=Vector3.one;
             root.SetPositionAndRotation(position,Quaternion.LookRotation(position-head.position,Vector3.up));
+            Pinned=true;
         }
 
-        // Keeps the panel in view: if the user has turned or walked well away from it, bring it back in front.
-        public void Follow(Transform head)
+        public void Unpin() { Pinned=false; }
+
+        // While not pinned: rides above the hand (left controller), scaled down, facing the head.
+        public void FollowHand(Transform hand,Transform head)
         {
-            if(!Visible) return;
-            var toPanel=root.position-head.position;
-            if(Vector3.Angle(Vector3.ProjectOnPlane(head.forward,Vector3.up),Vector3.ProjectOnPlane(toPanel,Vector3.up))>55 || toPanel.magnitude>1.6f) Place(head);
+            if(!Visible || Pinned || !hand) return;
+            root.localScale=Vector3.one*HandScale;
+            var center=hand.position+head.up*(height*HandScale/2+0.1f); // clear of the controller's button labels
+            root.SetPositionAndRotation(center,Quaternion.LookRotation(center-head.position,head.up));
         }
 
-        public void Show(Transform head) { if(!Visible) Place(head); Visible=true; root.gameObject.SetActive(true); }
+        public void Show() { Visible=true; root.gameObject.SetActive(true); }
         public void Hide() { Visible=false; root.gameObject.SetActive(false); }
 
         int MinColumn(Row row) => row.Open!=null || row.Buttons.Count==0 ? -1 : 0;
@@ -120,6 +131,7 @@ namespace LabWalk
             point=ray.GetPoint(distance);
             var local=root.InverseTransformPoint(point);
             if(Mathf.Abs(local.x)>Width/2 || Mathf.Abs(local.y)>height/2) return false;
+            if(pinRect.Contains(new Vector2(local.x,local.y))) { row=PinRow; column=0; return true; }
             // Buttons are listed after their row's label area, so check them first.
             for(int i=targets.Count-1;i>=0;i--)
                 if(targets[i].rect.Contains(new Vector2(local.x,local.y))) { row=targets[i].row; column=targets[i].column; return true; }
@@ -137,9 +149,15 @@ namespace LabWalk
             height=TitleHeight+shown*RowHeight+FooterHeight+Margin;
             var top=height/2;
             background.localScale=new Vector3(Width,height,1);
-            SetText(title,Title+(Rows.Count>MaxRows ? $"   ({first+1}-{first+shown} of {Rows.Count})" : ""),-Width/2+Margin,top-TitleHeight/2,TextAnchor.MiddleLeft,Color.white,Width-2*Margin);
-            SetText(footer,Footer,-Width/2+Margin,-top+FooterHeight/2+Margin/3,TextAnchor.MiddleLeft,new Color(0.65f,0.72f,0.8f),Width-2*Margin);
             quadsUsed=textsUsed=0; targets.Clear();
+            // Title-bar button: pin in the room / back to the hand.
+            var pinText=Pinned ? "To hand" : "Pin here";
+            pinRect=new Rect(Width/2-Margin-0.12f,top-TitleHeight/2-ButtonHeight/2,0.12f,ButtonHeight);
+            if(PinFocused) PlaceQuad(pinRect.center.x,pinRect.center.y,pinRect.width+0.01f,pinRect.height+0.01f,FocusOutline,4002);
+            PlaceQuad(pinRect.center.x,pinRect.center.y,pinRect.width,pinRect.height,Colors(Style.Plain).fill,4003);
+            SetText(NextText(ButtonTextHeight),pinText,pinRect.center.x,pinRect.center.y,TextAnchor.MiddleCenter,Colors(Style.Plain).ink,pinRect.width-0.008f);
+            SetText(title,Title+(Rows.Count>MaxRows ? $"   ({first+1}-{first+shown} of {Rows.Count})" : ""),-Width/2+Margin,top-TitleHeight/2,TextAnchor.MiddleLeft,Color.white,Width-2*Margin-0.13f);
+            SetText(footer,Footer,-Width/2+Margin,-top+FooterHeight/2+Margin/3,TextAnchor.MiddleLeft,new Color(0.65f,0.72f,0.8f),Width-2*Margin);
             for(int i=0;i<shown;i++)
             {
                 var index=first+i; var row=Rows[index];

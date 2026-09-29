@@ -239,6 +239,39 @@ static class Program
             Check(LayerGroupNames.TryParse("  Option :  Scheme / B ",out var k,out var og,out var n) && k==LayerGroupKind.Option && og=="Scheme" && n=="B","Name parsing");
             Check(!LayerGroupNames.TryParse("Options for later",out _,out _,out _) && !LayerGroupNames.TryParse("Toggle:",out _,out _,out _),"Non-matching names ignored");
         }
+        using(var file=new File3dm())
+        {
+            // Pointable items: "<item> / <part>" names on one layer form one item; so does a Rhino group.
+            file.Settings.ModelUnitSystem=UnitSystem.Meters;
+            int Add(string name)
+            {
+                var layer=new Layer {Id=Guid.NewGuid(),Name=name,IsVisible=true};
+                file.AllLayers.Add(layer); return file.AllLayers.FindId(layer.Id).Index;
+            }
+            int machines=Add("Machines"), benches=Add("Benches");
+            file.Objects.AddMesh(Box(0,0,0,1,1,1),new ObjectAttributes {LayerIndex=machines,Name="W201 Table saw / top"});
+            file.Objects.AddMesh(Box(0,0,1,1,1,1),new ObjectAttributes {LayerIndex=machines,Name="W201 Table saw / leg"});
+            file.Objects.AddMesh(Box(3,0,0,1,1,1),new ObjectAttributes {LayerIndex=machines,Name="W202 Planer / bed"});
+            file.Objects.AddMesh(Box(6,0,0,1,1,1),new ObjectAttributes {LayerIndex=benches,Name="W201 Table saw / outfeed"}); // same name, other layer: separate
+            file.Objects.AddMesh(Box(9,0,0,1,1,1),new ObjectAttributes {LayerIndex=benches,Name="Bench"});
+            var cart=file.AllGroups.AddGroup(); file.AllGroups.FindIndex(cart).Name="Rolling cart";
+            foreach(var x in new[]{12.0,14.0})
+            {
+                var attributes=new ObjectAttributes {LayerIndex=benches,Name="cart part"}; attributes.AddToGroup(cart);
+                file.Objects.AddMesh(Box(x,0,0,1,1,1),attributes);
+            }
+            var d=RhinoModelReader.Read(Save(file,"items"),null,CancellationToken.None);
+            var items=d.Objects.Skip(1).ToList();
+            string Names() => string.Join(", ",items.Select(o=>$"{o.Name} x{o.Parts}"));
+            Check(items.Count==5,"Five items: "+Names());
+            var saw=items.Single(o=>o.Name=="W201 Table saw" && o.Group==d.Groups.FindIndex(g=>g.Name=="Machines"));
+            Check(saw.Parts==2 && saw.Id.StartsWith("name:"),"Two named parts form one item");
+            Check(items.Count(o=>o.Name=="W201 Table saw")==2,"The same item name on another layer is a separate item");
+            Check(items.Single(o=>o.Name=="Rolling cart").Parts==2,"A Rhino group is one item, named after the group");
+            Check(items.Any(o=>o.Name=="Bench" && o.Parts==1),"An object without a part name is its own item");
+            var sawIndex=d.Objects.IndexOf(saw);
+            Check(d.Meshes.Where(m=>m.Group==saw.Group).Sum(m=>m.ObjectIds.Count(id=>(int)id==sawIndex))==48,"Both saw boxes carry the item index (2 x 24 vertices)");
+        }
         SampleRoom();
         Console.WriteLine("PASS: actual 3DM round trips, units/axes, quads/normals/colors, mirrored blocks, hidden layers, cached Breps, missing geometry, invalid file, cancellation, per-color merging, landmark and marker points, switchable layers.");
     }

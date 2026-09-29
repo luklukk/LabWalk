@@ -23,7 +23,7 @@ A layer with no renderable geometry (only curves, points or labels) is not liste
 
 ## In the headset
 
-**Left grip** opens the menu: a large panel in front of you, drawn on top of the model. If you turn away, it comes back in front of you.
+**Left grip** opens the menu. It rides above the left controller, drawn on top of the model. **Pin here** in its title bar (or **Y**) pins it in the room at eye level in front of you; it stays there as you walk around until you press **To hand** (or **Y**) again. Each time the menu opens, it starts on your hand.
 
 - Each row is a layer with three buttons: **Solid**, **Wire** (orange wireframe) and **Off**. The lit button is the current setting.
 - Folders have a blue **›**: open it (or point at the name) to see the layers inside. **‹ Back** or **B** goes up a level; B at the top closes the menu.
@@ -38,11 +38,15 @@ A layer with no renderable geometry (only curves, points or labels) is not liste
 
 With the model placed (after alignment), point the right controller at any part of the model:
 
-- The object under the ray is tinted and a label names it with its layer path, e.g. `SawStop PCS / Renovation > Equipment > Woodworking machines`. Unnamed block instances show their block name.
-- **Right trigger** switches that object to wireframe; its outline stays, the solid is gone. Point at it again (the ray still finds it) and pull the trigger to make it solid.
-- A block instance counts as one object. Objects are the top-level Rhino objects.
-- The View menu's top page shows how many objects are wireframe and has **Make all solid**.
-- Pointed objects are remembered per model version, by their Rhino object ID.
+- The item under the ray is tinted and a label names it with its layer path, e.g. `W201 SawStop aligned cabinet saw / Renovation > Equipment > Woodworking machines`.
+- **Right trigger** switches the whole item to wireframe; its outline stays, the solid is gone. Point at it again (the ray still finds it) and pull the trigger to make it solid.
+- **What counts as one item** (a whole tool, not a single part):
+  1. A Rhino **group**: all its objects, named after the group.
+  2. Objects on the same layer named `<item> / <part>`, e.g. `W201 SawStop aligned cabinet saw / Carbide blade tooth`: everything before ` / ` is the item. This is how the shop model is already named, so every tool, duct run and bench is one item without any extra work in Rhino.
+  3. A **block instance**.
+  4. Otherwise the single object (e.g. an unnamed wall).
+- The View menu's top page shows how many items are wireframe and has **Make all solid**.
+- Pointed items are remembered per model version (by group ID, layer and item name, or object ID).
 
 ## Wireframe details
 

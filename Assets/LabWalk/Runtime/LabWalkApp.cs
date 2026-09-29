@@ -257,7 +257,21 @@ namespace LabWalk
         {
             menuOpen=true; menuDirty=true;
             menu.FocusRow=0; menu.FocusColumn=-1;
-            menu.Show(eye.transform);
+            ShowMenuPanel();
+        }
+
+        // A newly opened menu rides on the left hand (the desktop preview has no hand: pinned in front instead).
+        void ShowMenuPanel()
+        {
+            if(menu.Visible) return;
+            menu.Show();
+            if(editorPreview) menu.Pin(eye.transform); else menu.Unpin();
+        }
+
+        void TogglePin()
+        {
+            if(menu.Pinned && !editorPreview) menu.Unpin(); else menu.Pin(eye.transform);
+            menuDirty=true;
         }
 
         void CloseMenu() { menuOpen=false; menu.Hide(); }
@@ -423,7 +437,7 @@ namespace LabWalk
             phase=resumePhase; message="Import cancelled. The current model is unchanged.";
         }
 
-        void HandleModelUi(bool accept,bool back,bool press,Ray pointer,bool pointerTracked)
+        void HandleModelUi(bool accept,bool back,bool press,bool pin,Ray pointer,bool pointerTracked)
         {
             if(phase==Phase.Importing) { if(back) importCancel?.Cancel(); return; }
             if(waitingForPicker)
@@ -436,13 +450,17 @@ namespace LabWalk
             // Pointing: the row and button under the right controller's ray take the focus; the trigger presses them.
             // (Only when the ray moves onto another target, so the sticks can still move the focus while it rests.)
             int row=-1, column=-1;
-            var onTarget=pointerTracked && menu.Hit(pointer,out row,out column,out _) && row>=0;
+            var onPanel=pointerTracked && menu.Hit(pointer,out row,out column,out _);
+            var onPin=onPanel && row==MenuPanel.PinRow;
+            var onTarget=onPanel && row>=0;
+            if(menu.PinFocused!=onPin) { menu.PinFocused=onPin; menuDirty=true; }
             var pointed=onTarget ? (row,column) : (-1,-1);
             if(pointed!=lastPointed)
             {
                 lastPointed=pointed;
                 if(onTarget) { menu.FocusRow=row; menu.FocusColumn=column; menuDirty=true; }
             }
+            if((press && onPin) || pin) { TogglePin(); return; }
             if(phase==Phase.Review)
             {
                 if(accept) _=ConfirmAsync();
@@ -483,15 +501,21 @@ namespace LabWalk
         {
             var ui=menuOpen || phase==Phase.Importing || phase==Phase.Review;
             if(!ui) { if(menu.Visible) menu.Hide(); menuPhase=phase; return; }
-            if(!menu.Visible) { menu.Show(eye.transform); menuDirty=true; }
+            if(!menu.Visible) { ShowMenuPanel(); menuDirty=true; }
             if(phase!=menuPhase) { menuPhase=phase; menuDirty=true; menu.FocusRow=0; menu.FocusColumn=-1; focusChoice=phase==Phase.Review; }
-            menu.Follow(eye.transform);
             if(phase==Phase.Importing && Time.unscaledTime>=menuRefresh) { menuRefresh=Time.unscaledTime+0.3f; menuDirty=true; }
             if(!menuDirty) return;
             menuDirty=false;
             BuildMenuRows();
             if(focusChoice) { focusChoice=false; menu.FocusRow=menu.Rows.Count-1; menu.FocusColumn=0; }
             menu.Render();
+        }
+
+        // After tracking updates: the unpinned menu rides on the left controller.
+        void PlaceMenu()
+        {
+            if(menu==null || !menu.Visible || menu.Pinned || editorPreview) return;
+            if(OVRInput.GetControllerPositionTracked(OVRInput.Controller.LTouch)) menu.FollowHand(rig.leftControllerAnchor,eye.transform);
         }
 
         // ---- Pointing at model objects: a label names the object; the right trigger switches it to wireframe and back ----
@@ -624,7 +648,8 @@ namespace LabWalk
                 bool accept=editorPreview ? k!=null && k.enterKey.wasPressedThisFrame : OVRInput.GetDown(OVRInput.RawButton.A);
                 bool back=editorPreview ? k!=null && (k.escapeKey.wasPressedThisFrame || k.backspaceKey.wasPressedThisFrame) : OVRInput.GetDown(OVRInput.RawButton.B);
                 bool openModels=editorPreview ? k!=null && k.oKey.wasPressedThisFrame : OVRInput.GetDown(OVRInput.RawButton.LHandTrigger);
-                if(modelUi) HandleModelUi(accept,back,trigger,ray,controllerTracked);
+                bool pin=editorPreview ? k!=null && k.pKey.wasPressedThisFrame : OVRInput.GetDown(OVRInput.RawButton.Y);
+                if(modelUi) HandleModelUi(accept,back,trigger,pin,ray,controllerTracked);
                 else if(openModels && !busy && phase!=Phase.Saving) OpenMenu();
             }
             UpdateMenu();
@@ -830,6 +855,7 @@ namespace LabWalk
                 {
                     guide.Set(ControllerGuide.Control.A,"Press");
                     guide.Set(ControllerGuide.Control.RightTrigger,"Press (point)");
+                    guide.Set(ControllerGuide.Control.Y,menu.Pinned ? "Menu to hand" : "Pin menu here");
                     var top=page==Page.View ? folder==null : !(layerView!=null && layerView.Any);
                     guide.Set(ControllerGuide.Control.B,top ? "Close" : "Back");
                     guide.Set(ControllerGuide.Control.RightStick,"Move"); guide.Set(ControllerGuide.Control.LeftStick,"Move");
@@ -918,6 +944,7 @@ namespace LabWalk
         void LateUpdate()
         {
             view?.FollowCamera();
+            PlaceMenu();
             if(guide!=null) { UpdateTooltips(); guide.Update(help && trackingHealthy); }
         }
         void OnDestroy()
