@@ -111,3 +111,18 @@ Release build of commit `8030ee3`: QR payload fix and diagnostics log, system co
 | MD5 | `e532211dcdcb0a09f2f6d51252144974` |
 | Version | 0.5.1, version code 7 |
 | Checked | apksigner v2, same certificate as 0.5.0; not debuggable; no Meta XR Operator components; `BOUNDARYLESS_APP` and `RENDER_MODEL` features; `USE_SCENE`, `USE_ANCHOR_API`, `RENDER_MODEL`, `BOUNDARY_VISIBILITY` permissions |
+## Release v0.5.2 (2026-09-28, not yet installed on a Quest)
+
+Release build of commit `0f7d4ac`: retries MRUK's QR tracker start while it is off and shows the tracker state on the marker panel.
+
+| Property | Value |
+|---|---|
+| Device Manager link (this release) | https://github.com/luklukk/LabWalk/releases/download/v0.5.2/LabWalk-Quest3S.apk |
+| Permanent link (newest release) | https://github.com/luklukk/LabWalk/releases/latest/download/LabWalk-Quest3S.apk |
+| Size | 102,058,877 bytes |
+| SHA-256 | `2a6c8140fc32afab95354b7b7e6c3956d61cde076005bf1b2130024116d65fed` |
+| MD5 | `cf1eb0cd3564f5fd40521b8b77021b66` |
+| Version | 0.5.2, version code 8 |
+| Checked | apksigner v2, same certificate as 0.5.0 and 0.5.1; not debuggable |
+
+Correction to the v0.5.0 note: Meta documents that self-hosted APKs are not updated from a link Device Manager already knows. Give Device Manager each release's own link (`/releases/download/vX.Y.Z/LabWalk-Quest3S.apk`); the permanent link is for sideloading.
