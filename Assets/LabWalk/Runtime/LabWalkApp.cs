@@ -154,7 +154,8 @@ namespace LabWalk
             // Keep the old anchor until a replacement and its metadata have both been saved.
             phase=Phase.Origin; showModel=false; firstMeasure=false; view.ClearMeasurement();
             anchorStatus="Aligning; previous saved placement retained";
-            message="Point at physical floor reference A; right trigger to record.";
+            message=markers.Active ? "Look at 2 or more QR markers from about 1 m, facing them; the model places itself. Or point at floor reference A and pull the right trigger."
+                : "Point at physical floor reference A; right trigger to record.";
         }
 
         void RecordReference(Vector3 point)
@@ -633,7 +634,9 @@ namespace LabWalk
         float markerWarnTime;
         void UpdateMarkers(bool modelUi)
         {
-            markers.Update();
+            // The camera looks for codes only while it is useful: passthrough visible, tracking healthy, no menu.
+            var scanPhase=phase==Phase.Origin || phase==Phase.Direction || phase==Phase.Adjust || phase==Phase.Pinned || phase==Phase.Recovery;
+            markers.Update(model!=null && scanPhase && !modelUi && trackingHealthy && !view.Immersive);
             if(!markers.HasSolution || model==null || busy || modelUi || !trackingHealthy) return;
             // Direction means the user has started a manual two-point alignment; let them finish it.
             var waiting=phase==Phase.Origin || phase==Phase.Recovery;
@@ -733,7 +736,7 @@ namespace LabWalk
         {
             switch(phase)
             {
-                case Phase.Origin: return markers.Active ? "Find markers or mark point A" : "Align: mark point A";
+                case Phase.Origin: return markers.Active ? "Look at markers or mark point A" : "Align: mark point A";
                 case Phase.Direction: return "Align: mark point B";
                 case Phase.Adjust: return "Adjust, not saved";
                 case Phase.Pinned: return view.Immersive ? "VR" : "Placed";

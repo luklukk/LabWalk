@@ -16,8 +16,10 @@
   </application>
   <uses-feature android:name="android.hardware.vr.headtracking" android:version="1" android:required="true" />
   <uses-permission android:name="com.oculus.permission.USE_ANCHOR_API" />
-  <!-- Spatial data: required by Horizon OS QR code tracking (marker calibration). -->
+  <!-- Spatial data (scene). -->
   <uses-permission android:name="com.oculus.permission.USE_SCENE" />
+  <!-- Headset camera: the QR marker scanner reads the passthrough camera image (Passthrough Camera API). -->
+  <uses-permission android:name="horizonos.permission.HEADSET_CAMERA" />
   <uses-feature android:name="com.oculus.feature.PASSTHROUGH" android:required="true" />
   <!-- No boundary needed while passthrough is visible (walking between rooms); the app requests boundary suppression only then. -->
   <uses-feature android:name="com.oculus.feature.BOUNDARYLESS_APP" android:required="true" />

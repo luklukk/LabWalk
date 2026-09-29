@@ -1,0 +1,4 @@
+<linker>
+  <!-- Keep ZXing whole under IL2CPP code stripping (camera QR marker scanner). -->
+  <assembly fullname="zxing" preserve="all" />
+</linker>

@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><Nullable>disable</Nullable></PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="QRCoder" Version="1.6.0" />
+    <PackageReference Include="ZXing.Net" Version="0.16.10" />
+    <!-- The same files the headset build uses. -->
+    <Compile Include="../../Assets/LabWalk/Core/AlignmentMath.cs" Link="Shared/AlignmentMath.cs" />
+    <Compile Include="../../Assets/LabWalk/Core/QrPose.cs" Link="Shared/QrPose.cs" />
+    <Compile Include="../../Assets/LabWalk/Runtime/QrFrameDecoder.cs" Link="Shared/QrFrameDecoder.cs" />
+  </ItemGroup>
+</Project>

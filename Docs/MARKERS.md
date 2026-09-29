@@ -1,19 +1,25 @@
 # QR marker calibration
 
-Added in 0.3.0. **Not yet run on a Quest.** Everything below was checked on the desktop only (math tests, reader tests, compile).
+Added in 0.3.0. Since 0.6.0, Lab Walk reads the codes from the passthrough camera image itself. Before that it relied on Horizon OS's built-in QR tracking, which reported no codes on the lab headsets. **0.6.0 is not yet run on a Quest.** The decoder and 3D locator are tested on the desktop with synthetic camera images (`dotnet run --project Tools/ScanTests`).
 
 ## How it works
 
 1. Printed QR codes are taped to walls. Each code's text is its ID (`LW1`, `LW2`, `LW3`).
 2. The Rhino model has a point named `LabWalk marker <ID>` at each code's center, on the wall surface.
-3. On the headset, Horizon OS itself detects and tracks the codes (Meta MR Utility Kit QR code tracking, Horizon OS v78+, Quest 3/3S). Lab Walk only reads their positions. It never processes camera images.
-4. Each code's position is averaged over many updates. Once two or more codes are steady (at least 8 updates, spread under 2 cm), Lab Walk fits the model to them: yaw plus a 3D translation, never scale. The panel shows each code's status and the fit error.
-5. If Lab Walk is waiting for alignment, the model is placed automatically, then keeps refining while more samples arrive until you nudge it by hand. **A** saves the placement (spatial anchor) as before. **X** enters VR, even unsaved.
+3. On the headset, Lab Walk reads one frame from the left passthrough camera four times a second. It uses Meta's Passthrough Camera API through MRUK's `PassthroughCameraAccess` (Quest 3/3S, Horizon OS v74+). Decoding runs on a background thread (`QrFrameDecoder`, using ZXing.Net):
+   - ZXing finds each code's three corner squares.
+   - `QrPose` works out the code's 3D position from them and the printed size (15.0 cm).
+   - The modules are read through that pose, which also handles codes seen at an angle.
+   - The camera's position when that frame was taken puts the code into room coordinates.
+4. Each code's position is averaged over many sightings, leaving out stray readings. Once two or more codes are steady (at least 5 sightings within 3 cm), Lab Walk fits the model to them: yaw plus a 3D translation, never scale. The panel shows each code's status (with its measured height), the fit error, and the camera scan state.
+5. If Lab Walk is waiting for alignment, the model is placed automatically. It then keeps refining as more sightings arrive, until you nudge it by hand. **A** saves the placement (spatial anchor) as before. **X** enters VR, even unsaved.
 6. With a saved placement, the app only compares. If the codes show the model is more than 3 cm off, it says so; the **left trigger** re-snaps.
 
-In passthrough, a **magenta cross** marks where the placed model expects each code and a **cyan cross** where the headset sees it. When they coincide on the paper, the placement is right.
+**Scanning tips:** stand about 0.5 to 1.5 m from a code and roughly face it (within about 35 degrees). Hold still for a second or two. Good light helps. In desktop tests the 3D position is within about 1 cm up to 1.2 m and 1 to 2 cm at 2 m, before averaging. Codes turned more than about 40 degrees away are not found.
 
-The app asks for the **spatial data** permission (`com.oculus.permission.USE_SCENE`) the first time a model with markers loads. It does not need a room scan (Space Setup).
+In passthrough, a **magenta cross** marks where the placed model expects each code and a **cyan cross** where the camera sees it. When they coincide on the paper, the placement is right.
+
+The app asks for **headset camera** access (`horizonos.permission.HEADSET_CAMERA`) the first time it looks for markers. Camera frames are only processed on the headset, in memory, and are never stored or sent anywhere. The app does not need a room scan (Space Setup).
 
 ## Recentering (Meta button)
 
