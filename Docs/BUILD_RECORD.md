@@ -153,3 +153,16 @@ Release build of commit `79ec0d5`: View menu following the Rhino layer tree (Sol
 | MD5 | `42a8776bf14402b15c8cfcd3d4222e2f` |
 | Version | 0.7.0, version code 10 |
 | Checked | apksigner v2, same certificate as 0.5.x/0.6.0; not debuggable; `HEADSET_CAMERA` permission; `MenuPanel`, `ObjectPicker` and the pick/overlay shaders present |
+## Release v0.8.0 (2026-09-29, not yet installed on a Quest)
+
+Release build of commit `e2a05af`: automatic QR placement with placement tools behind Fine-tune, hand-mounted menu with pinning, whole tools as pointable items, and the drawing-style vellum UI. Includes the unpublished 0.7.1.
+
+| Property | Value |
+|---|---|
+| Device Manager link (this release) | https://github.com/luklukk/LabWalk/releases/download/v0.8.0/LabWalk-Quest3S.apk |
+| Permanent link (newest release) | https://github.com/luklukk/LabWalk/releases/latest/download/LabWalk-Quest3S.apk |
+| Size | 102,757,361 bytes |
+| SHA-256 | `97decc9118401727257cada1aa12afb933b46a2d359b0edbbc20fa6079fc9051` |
+| MD5 | `1c7f4ca72b0fdd4dd8c741a5aa869d91` |
+| Version | 0.8.0, version code 12 |
+| Checked | apksigner v2, same certificate as earlier releases; not debuggable |
