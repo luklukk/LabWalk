@@ -140,3 +140,16 @@ Release build of commit `1b9e577`: QR markers read from the passthrough camera i
 | MD5 | `288303e52159f52ac122ab3a200ae2e6` |
 | Version | 0.6.0, version code 9 |
 | Checked | apksigner v2, same certificate as 0.5.x; not debuggable; `HEADSET_CAMERA` permission; ZXing, `QrFrameDecoder`, `CameraMarkerScanner` and `PassthroughCameraAccess` present in IL2CPP metadata |
+## Release v0.7.0 (2026-09-29, not yet installed on a Quest)
+
+Release build of commit `79ec0d5`: View menu following the Rhino layer tree (Solid / Wire / Off per layer, large overlay panel) and per-object wireframe by pointing (GPU pick, object state texture).
+
+| Property | Value |
+|---|---|
+| Device Manager link (this release) | https://github.com/luklukk/LabWalk/releases/download/v0.7.0/LabWalk-Quest3S.apk |
+| Permanent link (newest release) | https://github.com/luklukk/LabWalk/releases/latest/download/LabWalk-Quest3S.apk |
+| Size | 102,761,477 bytes |
+| SHA-256 | `46ae945d75e30d9e37ff5a9dbbe7a4da8668bc148f3061a40e82794de5c7caaf` |
+| MD5 | `42a8776bf14402b15c8cfcd3d4222e2f` |
+| Version | 0.7.0, version code 10 |
+| Checked | apksigner v2, same certificate as 0.5.x/0.6.0; not debuggable; `HEADSET_CAMERA` permission; `MenuPanel`, `ObjectPicker` and the pick/overlay shaders present |
