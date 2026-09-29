@@ -48,7 +48,7 @@ namespace LabWalk
                     for(var p=t.parent; p && p!=root.transform && parentLayer==null; p=p.parent) byNode.TryGetValue(p,out parentLayer);
                     var layer=new ModelLayer {Kind=kind,OptionGroup=optionGroup,Name=name,DefaultOn=t.gameObject.activeSelf,Parent=parentLayer,Root=t.gameObject};
                     byNode[t]=layer;
-                    if(t.GetComponentInChildren<Renderer>(true)) loaded.Layers.Add(layer);
+                    if(t.GetComponentInChildren<Renderer>(true)) { loaded.Layers.Add(layer); parentLayer?.Children.Add(layer); }
                 }
                 return loaded;
             }

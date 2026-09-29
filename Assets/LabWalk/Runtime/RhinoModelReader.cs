@@ -25,8 +25,11 @@ namespace LabWalk
         // Calibration markers: points named "LabWalk marker <ID>" at the center of a printed QR code whose text is <ID>.
         public const string MarkerPrefix="LabWalk marker ";
         public readonly Dictionary<string,float[]> Markers=new Dictionary<string,float[]>();
-        // Switchable layers: "Toggle: <name>" and "Option: [<group> /] <name>" (see LayerGroupNames).
+        // The layer tree as switchable nodes ("Option: [<group> /] <name>" layers are exclusive; see LayerGroupNames).
         public readonly List<RhinoLayerGroup> Groups=new List<RhinoLayerGroup>();
+        // Top-level Rhino objects (a block instance counts as one), for pointing at them in the app. Index 0 is
+        // reserved for "no object"; every mesh and line vertex carries its object's index (ObjectIds).
+        public readonly List<RhinoObjectInfo> Objects=new List<RhinoObjectInfo>{ null };
         // Feature edges (outlines and creases) of geometry on switchable layers, for their wireframe display.
         public readonly List<RhinoLineData> Lines=new List<RhinoLineData>();
         public string Summary => $"3DM: {Meshes.Count} meshes, {Triangles:N0} triangles; {Units} to meters. " +
@@ -45,6 +48,14 @@ namespace LabWalk
         public int[] Triangles;
         public float R,G,B;
         public int Group=-1; // index into RhinoModelData.Groups; -1 = always shown
+        public float[] ObjectIds; // per vertex: index into RhinoModelData.Objects
+    }
+
+    public sealed class RhinoObjectInfo
+    {
+        public string Id;    // Rhino object GUID
+        public string Name;  // object name, else block name; may be empty
+        public int Group=-1; // layer node of the object itself
     }
 
     // Line segments (pairs of indices into Positions) in final Unity-local meters.
@@ -53,6 +64,7 @@ namespace LabWalk
         public int Group;
         public float[] Positions;
         public int[] Indices;
+        public float[] ObjectIds; // per vertex
     }
 
     // A Rhino layer whose name makes it switchable in the app. Everything on it and its sublayers belongs to it.
@@ -64,6 +76,7 @@ namespace LabWalk
         public bool DefaultOn;      // the layer's visibility in the file
         public int Parent=-1;       // enclosing switchable layer, if nested (both must be on)
         public string LayerPath;
+        public int Order;           // position in Rhino's layer table, to list layers as Rhino does
     }
 
     public enum LayerGroupKind { Toggle, Option }
@@ -119,7 +132,7 @@ namespace LabWalk
                 {
                     token.ThrowIfCancellationRequested();
                     if(!obj.Attributes.IsInstanceDefinitionObject)
-                        reader.Object(obj,Transform.Identity,null,new HashSet<Guid>(),0,-1);
+                        reader.Object(obj,Transform.Identity,null,new HashSet<Guid>(),0,-1,0);
                 }
                 reader.Finish();
                 if(data.Meshes.Count==0)
@@ -138,7 +151,7 @@ namespace LabWalk
             // Merging keeps draw calls low on Quest: a lab of ~10k Brep faces becomes a few dozen meshes.
             sealed class Batch
             {
-                public readonly List<float> Positions=new List<float>(), Normals=new List<float>();
+                public readonly List<float> Positions=new List<float>(), Normals=new List<float>(), ObjectIds=new List<float>();
                 public readonly List<int> Triangles=new List<int>();
                 public System.Drawing.Color Color;
                 public bool HasNormals;
@@ -156,11 +169,11 @@ namespace LabWalk
                     data.Meshes.Add(new RhinoMeshData {
                         Name=$"Rhino #{b.Color.R:X2}{b.Color.G:X2}{b.Color.B:X2} ({data.Meshes.Count+1})",
                         Positions=b.Positions.ToArray(),Normals=b.HasNormals ? b.Normals.ToArray() : null,Triangles=b.Triangles.ToArray(),
-                        R=b.Color.R/255f,G=b.Color.G/255f,B=b.Color.B/255f,Group=b.Group});
+                        R=b.Color.R/255f,G=b.Color.G/255f,B=b.Color.B/255f,Group=b.Group,ObjectIds=b.ObjectIds.ToArray()});
                 }
                 batches.Clear(); open.Clear();
                 foreach(var l in lineBatches)
-                    if(l.Indices.Count>0) data.Lines.Add(new RhinoLineData {Group=l.Group,Positions=l.Positions.ToArray(),Indices=l.Indices.ToArray()});
+                    if(l.Indices.Count>0) data.Lines.Add(new RhinoLineData {Group=l.Group,Positions=l.Positions.ToArray(),Indices=l.Indices.ToArray(),ObjectIds=l.ObjectIds.ToArray()});
                 lineBatches.Clear(); openLines.Clear();
             }
             public Reader(File3dm file,RhinoModelData data,CancellationToken token)
@@ -172,16 +185,17 @@ namespace LabWalk
                 if(data.Warnings.Count<32) data.Warnings.Add(message);
             }
 
-            readonly Dictionary<int,(bool visible,int group)> layerCache=new Dictionary<int,(bool,int)>();
+            readonly Dictionary<int,(bool visible,int group,bool marked)> layerCache=new Dictionary<int,(bool,int,bool)>();
             readonly Dictionary<Guid,int> groupByLayer=new Dictionary<Guid,int>();
 
-            // Returns whether an object is imported and which switchable layer (if any) it belongs to.
-            // A switchable layer's own on/off state is its default in the app, not a filter, so hidden ones are
-            // still imported. Below it, a sublayer turned off by the user stays excluded; a sublayer that is only
-            // off because its switchable parent is off keeps its remembered (persistent) visibility.
-            (bool visible,int group) Resolve(ObjectAttributes attributes)
+            // Returns whether an object is imported, its layer node, and whether its layer path has a marked
+            // ("Option:"/"Toggle:") layer. A marked layer's own on/off state is its default in the app, not a
+            // filter, so hidden ones are still imported. Below it, a sublayer turned off by the user stays
+            // excluded; a sublayer that is only off because its marked parent is off keeps its remembered
+            // (persistent) visibility.
+            (bool visible,int group,bool marked) Resolve(ObjectAttributes attributes)
             {
-                if(!attributes.Visible) return (false,-1);
+                if(!attributes.Visible) return (false,-1,false);
                 if(layerCache.TryGetValue(attributes.LayerIndex,out var cached)) return cached;
                 var chain=new List<Layer>();
                 var seen=new HashSet<Guid>();
@@ -190,28 +204,32 @@ namespace LabWalk
                     if(!seen.Add(layer.Id)) throw new InvalidDataException("3DM has cyclic layer parents.");
                     chain.Add(layer); // leaf first
                 }
-                bool visible=true; int group=-1, parentGroup=-1;
-                // Walk root to leaf so nested switchable layers know their enclosing one.
+                bool visible=true, insideMarked=false; int group=-1;
+                // Walk root to leaf. Every layer on the way becomes a node of the app's view tree, mirroring the
+                // Rhino layer structure; "Option:" layers are exclusive choices, all others (with or without the
+                // "Toggle:" prefix) switch on their own.
                 for(int i=chain.Count-1;i>=0;i--)
                 {
                     var layer=chain[i];
                     var parentLayer=i+1<chain.Count ? chain[i+1] : null;
                     var ownOn=parentLayer==null || parentLayer.IsVisible ? layer.IsVisible : layer.GetPersistentVisibility();
-                    if(LayerGroupNames.TryParse(layer.Name,out var kind,out var optionGroup,out var name))
+                    var marked=LayerGroupNames.TryParse(layer.Name,out var kind,out var optionGroup,out var name);
+                    if(!marked)
                     {
-                        if(!groupByLayer.TryGetValue(layer.Id,out var index))
-                        {
-                            index=data.Groups.Count;
-                            data.Groups.Add(new RhinoLayerGroup {Kind=kind,OptionGroup=optionGroup,Name=name,DefaultOn=ownOn,Parent=parentGroup,LayerPath=layer.FullPath});
-                            groupByLayer.Add(layer.Id,index);
-                        }
-                        group=parentGroup=index;
-                        continue;
+                        // Unmarked layers turned off in Rhino stay excluded (outside marked layers, every layer must be visible).
+                        if(!(insideMarked ? ownOn : layer.IsVisible)) { visible=false; break; }
+                        kind=LayerGroupKind.Toggle; optionGroup=null; name=layer.Name;
                     }
-                    // Outside any switchable layer the rule is unchanged: every layer must be visible.
-                    if(!(group>=0 ? ownOn : layer.IsVisible)) { visible=false; break; }
+                    if(!groupByLayer.TryGetValue(layer.Id,out var index))
+                    {
+                        index=data.Groups.Count;
+                        data.Groups.Add(new RhinoLayerGroup {Kind=kind,OptionGroup=optionGroup,Name=name,DefaultOn=!marked || ownOn,Parent=group,LayerPath=layer.FullPath,Order=layer.Index});
+                        groupByLayer.Add(layer.Id,index);
+                    }
+                    group=index;
+                    insideMarked|=marked;
                 }
-                var result=(visible,visible ? group : -1);
+                var result=(visible,visible ? group : -1,insideMarked);
                 layerCache[attributes.LayerIndex]=result;
                 return result;
             }
@@ -228,7 +246,8 @@ namespace LabWalk
             }
 
             // group: the switchable layer of the enclosing block instance, inherited unless this object's own layer has one.
-            public void Object(File3dmObject obj,Transform transform,System.Drawing.Color? parent,HashSet<Guid> stack,int depth,int group)
+            // objectIndex: the top-level object this geometry belongs to (0: this is a top-level object, assign one).
+            public void Object(File3dmObject obj,Transform transform,System.Drawing.Color? parent,HashSet<Guid> stack,int depth,int group,int objectIndex)
             {
                 token.ThrowIfCancellationRequested();
                 if(++visits>100000) throw new InvalidDataException("3DM exceeds the 100,000 object/instance limit. Simplify the model.");
@@ -254,11 +273,20 @@ namespace LabWalk
                     data.Markers.Add(id,value);
                     return;
                 }
-                var (visible,ownGroup)=Resolve(obj.Attributes);
+                var (visible,ownGroup,ownMarked)=Resolve(obj.Attributes);
                 if(!visible) { data.Hidden++; return; }
-                if(ownGroup>=0) group=ownGroup;
+                // Top-level objects belong to their own layer. Parts of a block follow the block instance's layer,
+                // unless they sit on a marked layer themselves (as before every layer became a node).
+                if(ownGroup>=0 && (depth==0 || ownMarked)) group=ownGroup;
                 var color=Color(obj.Attributes,parent);
                 var name=string.IsNullOrEmpty(obj.Attributes.Name) ? obj.Id.ToString() : obj.Attributes.Name;
+                if(objectIndex==0)
+                {
+                    var label=obj.Attributes.Name;
+                    if(string.IsNullOrEmpty(label) && geometry is InstanceReferenceGeometry reference) label=file.AllInstanceDefinitions.FindId(reference.ParentIdefId)?.Name;
+                    objectIndex=data.Objects.Count;
+                    data.Objects.Add(new RhinoObjectInfo {Id=obj.Id.ToString(),Name=label ?? "",Group=group});
+                }
                 if(geometry is InstanceReferenceGeometry instance)
                 {
                     if(depth>=32 || !stack.Add(instance.ParentIdefId))
@@ -273,12 +301,12 @@ namespace LabWalk
                         {
                             var child=file.Objects.FindId(id);
                             if(child==null) Skip(name+": missing block object");
-                            else Object(child,transform*instance.Xform,color,stack,depth+1,group);
+                            else Object(child,transform*instance.Xform,color,stack,depth+1,group,objectIndex);
                         }
                     }
                     finally { stack.Remove(instance.ParentIdefId); }
                 }
-                else if(geometry is Mesh mesh) AddMesh(mesh,transform,color,name,group);
+                else if(geometry is Mesh mesh) AddMesh(mesh,transform,color,name,group,objectIndex);
                 else if(geometry is Brep brep)
                 {
                     foreach(var face in brep.Faces)
@@ -286,7 +314,7 @@ namespace LabWalk
                         using(var cached=face.GetMesh(MeshType.Render))
                         {
                             if(cached==null) Skip(name+": surface face has no saved render mesh");
-                            else AddMesh(cached,transform,color,name,group);
+                            else AddMesh(cached,transform,color,name,group,objectIndex);
                         }
                     }
                 }
@@ -295,14 +323,14 @@ namespace LabWalk
                     using(var cached=extrusion.GetMesh(MeshType.Render))
                     {
                         if(cached==null) Skip(name+": extrusion has no saved render mesh");
-                        else AddMesh(cached,transform,color,name,group);
+                        else AddMesh(cached,transform,color,name,group,objectIndex);
                     }
                 }
                 else if(geometry is Curve || geometry is Point || geometry is PointCloud || geometry is TextDot || geometry is AnnotationBase) data.Omitted++;
                 else Skip(name+": unsupported "+geometry?.GetType().Name+" (convert to mesh in Rhino)");
             }
 
-            void AddMesh(Mesh source,Transform transform,System.Drawing.Color color,string name,int group)
+            void AddMesh(Mesh source,Transform transform,System.Drawing.Color color,string name,int group,int objectIndex)
             {
                 token.ThrowIfCancellationRequested();
                 int count=source.Vertices.Count, faces=source.Faces.Count;
@@ -341,8 +369,9 @@ namespace LabWalk
                     Triangle(batch.Triangles,offset,f.A,f.B,f.C,flip);
                     if(f.IsQuad) Triangle(batch.Triangles,offset,f.A,f.C,f.D,flip);
                 }
-                if(group>=0) AddEdges(positions,batch.Triangles,before,offset,group);
+                if(group>=0) AddEdges(positions,batch.Triangles,before,offset,group,objectIndex);
                 batch.Positions.AddRange(positions);
+                for(int i=0;i<count;i++) batch.ObjectIds.Add(objectIndex);
                 if(normals!=null) batch.Normals.AddRange(normals);
                 data.Vertices+=count; data.Triangles+=(batch.Triangles.Count-before)/3;
             }
@@ -362,7 +391,7 @@ namespace LabWalk
             // ---- Feature edges for wireframe display ----
             const int MaxLineVertices=2000000, MaxLineBatchVertices=250000;
             const float CreaseCos=0.9397f; // edges between faces more than 20 degrees apart are drawn
-            sealed class LineBatch { public readonly List<float> Positions=new List<float>(); public readonly List<int> Indices=new List<int>(); public int Group; }
+            sealed class LineBatch { public readonly List<float> Positions=new List<float>(), ObjectIds=new List<float>(); public readonly List<int> Indices=new List<int>(); public int Group; }
             readonly Dictionary<int,LineBatch> openLines=new Dictionary<int,LineBatch>();
             readonly List<LineBatch> lineBatches=new List<LineBatch>();
             int lineVertices;
@@ -370,7 +399,7 @@ namespace LabWalk
 
             // One source mesh (already in meters): weld split vertices, then keep outline, crease and non-manifold
             // edges. Coplanar triangulation diagonals and the facets of smooth curved surfaces are dropped.
-            void AddEdges(float[] positions,List<int> triangles,int start,int offset,int group)
+            void AddEdges(float[] positions,List<int> triangles,int start,int offset,int group,int objectIndex)
             {
                 int n=positions.Length/3;
                 var weld=new int[n];
@@ -408,8 +437,8 @@ namespace LabWalk
                     }
                     var line=LineBatchFor(group,2);
                     if(line!=current) { current=line; lineIndex.Clear(); }
-                    line.Indices.Add(LineVertex(line,lineIndex,(int)(e.Key>>32),firstVertex,positions));
-                    line.Indices.Add(LineVertex(line,lineIndex,(int)(e.Key&0xffffffff),firstVertex,positions));
+                    line.Indices.Add(LineVertex(line,lineIndex,(int)(e.Key>>32),firstVertex,positions,objectIndex));
+                    line.Indices.Add(LineVertex(line,lineIndex,(int)(e.Key&0xffffffff),firstVertex,positions,objectIndex));
                 }
             }
 
@@ -424,12 +453,13 @@ namespace LabWalk
                 edges[key]=(e.count+1,e.nx,e.ny,e.nz,e.crease || e.count>=2 || dot<CreaseCos);
             }
 
-            int LineVertex(LineBatch line,Dictionary<int,int> lineIndex,int welded,List<int> firstVertex,float[] positions)
+            int LineVertex(LineBatch line,Dictionary<int,int> lineIndex,int welded,List<int> firstVertex,float[] positions,int objectIndex)
             {
                 if(lineIndex.TryGetValue(welded,out var index)) return index;
                 var vertex=firstVertex[welded];
                 index=line.Positions.Count/3;
                 line.Positions.Add(positions[vertex*3]); line.Positions.Add(positions[vertex*3+1]); line.Positions.Add(positions[vertex*3+2]);
+                line.ObjectIds.Add(objectIndex);
                 lineIndex[welded]=index; lineVertices++;
                 return index;
             }

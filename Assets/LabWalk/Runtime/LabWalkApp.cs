@@ -34,16 +34,13 @@ namespace LabWalk
         float averageFrameTime=1f/72, panelTime;
         AlignmentResult alignment;
 
-        sealed class MenuItem { public string Label, Action="Open", AltAction; public Action Run, Alt; }
         LayerView layerView;
-        bool modelsMenu;
+        MenuPanel menu;
         readonly MarkerCalibrator markers=new MarkerCalibrator();
         bool markerPlaced, userAdjusted;
         ModelCandidate candidate;
         CancellationTokenSource importCancel;
-        readonly List<MenuItem> menuItems=new List<MenuItem>();
         bool menuOpen, waitingForPicker;
-        int menuIndex;
         float menuRepeat, pickerPoll;
         string menuNote="";
         Phase resumePhase;
@@ -71,6 +68,8 @@ namespace LabWalk
             else eye=rig.centerEyeAnchor.GetComponent<Camera>();
             eye.nearClipPlane=0.05f; eye.farClipPlane=150;
             view=new WalkthroughView(eye,editorPreview ? null : rig.GetComponent<OVRPassthroughLayer>());
+            menu=new MenuPanel();
+            picker=new ObjectPicker();
             if(!editorPreview)
             {
                 view.MountPanel(rig.leftControllerAnchor);
@@ -109,7 +108,11 @@ namespace LabWalk
             model.Root.transform.SetParent(placement,false);
             model.Root.SetActive(false);
             markers.SetMarkers(manifest.markers);
+            SetHover(0);
+            layerView?.Release();
             layerView=new LayerView(model,fingerprint);
+            pickRenderers.Clear();
+            foreach(var layer in model.Layers) pickRenderers.AddRange(layer.Solid);
             markerPlaced=false;
             next.Model=null; next.Dispose();
             previous?.Dispose();
@@ -233,55 +236,123 @@ namespace LabWalk
             }
         }
 
-        // ---- View menu (switchable layers) and Models menu (import folder files, system picker, bundled sample) ----
+        // ---- Menu: View (the model's layer tree), Models (import) and model review, on the MenuPanel ----
+
+        enum Page { View, Models }
+        Page page;
+        ModelLayer folder;   // View folder being shown (null: top level)
+        bool menuDirty, focusChoice;
+        Phase menuPhase;
+        float menuRefresh;
+        readonly List<ModelLayer> rowLayers=new List<ModelLayer>();
 
         void OpenMenu()
         {
-            if(layerView!=null && layerView.Any) OpenViewMenu(false); else OpenModelsMenu();
+            page=layerView!=null && layerView.Any ? Page.View : Page.Models;
+            folder=null; menuNote="";
+            ShowMenu();
         }
 
-        void OpenViewMenu(bool keepIndex)
+        void ShowMenu()
         {
-            var index=keepIndex ? menuIndex : 0;
-            menuItems.Clear(); modelsMenu=false; menuNote="";
-            foreach(var group in layerView.OptionGroups)
-                foreach(var option in layerView.Options(group))
+            menuOpen=true; menuDirty=true;
+            menu.FocusRow=0; menu.FocusColumn=-1;
+            menu.Show(eye.transform);
+        }
+
+        void CloseMenu() { menuOpen=false; menu.Hide(); }
+
+        void OpenFolder(ModelLayer next)
+        {
+            var previous=folder; folder=next;
+            BuildMenuRows();
+            var back=previous!=null && previous.Parent==next ? rowLayers.IndexOf(previous) : -1;
+            menu.FocusRow=back>=0 ? back : 0; menu.FocusColumn=-1;
+            menuDirty=true;
+        }
+
+        void OpenModels()
+        {
+            page=Page.Models;
+            menuNote=ModelImport.ListImportFiles().Count==0 ? "No .3dm/.glb files in the import folder yet." : "";
+            ShowMenu();
+        }
+
+        void SetLayer(ModelLayer layer,LayerView.Display display) { layerView.Set(layer,display); menuDirty=true; }
+
+        void BuildMenuRows()
+        {
+            menu.Rows.Clear(); rowLayers.Clear();
+            MenuPanel.Row Row(string label,Action open=null,bool dim=false)
+            { var r=new MenuPanel.Row {Label=label,Open=open,Dim=dim}; menu.Rows.Add(r); rowLayers.Add(null); return r; }
+            void Add(MenuPanel.Row row,string text,MenuPanel.Style style,Action press)
+            { row.Buttons.Add(new MenuPanel.Button {Text=text,Style=style,Press=press}); }
+            void Lines(string text,bool dim=true) { foreach(var line in Wrap(text,58).Split('\n')) if(line.Length>0) Row(line,null,dim); }
+
+            if(phase==Phase.Review && candidate!=null)
+            {
+                var m=candidate.Model; var size=m.BoundsMeters.size; var largest=Mathf.Max(size.x,size.y,size.z);
+                menu.Title="Review model: "+candidate.Manifest.displayName;
+                Row($"File: {candidate.Manifest.file}",null,true);
+                Row($"Units: {m.SourceUnits} to meters (true size)",null,true);
+                Row($"Size: {size.x:F2} x {size.y:F2} x {size.z:F2} m (X/Y/Z)",null,true);
+                if(largest>300 || largest<0.3f) Row("CHECK UNITS: this size is unusual for a room.");
+                Lines(m.ImportSummary); Lines(candidate.Notes);
+                if(m.Incomplete) Row("Some geometry could not be imported (see the summary).");
+                var choice=Row(candidate.Bundled ? "Replaces the imported model." : "Kept for the next launch.");
+                Add(choice,"Use this model",MenuPanel.Style.Action,()=>_=ConfirmAsync());
+                Add(choice,"Cancel",MenuPanel.Style.Plain,CancelReview);
+                menu.Footer=editorPreview ? "Enter: use   Esc: cancel" : "A: use this model   B: cancel";
+                return;
+            }
+            if(phase==Phase.Importing)
+            {
+                menu.Title="Models";
+                Lines(message,false);
+                Add(Row(""),"Cancel",MenuPanel.Style.Plain,()=>importCancel?.Cancel());
+                menu.Footer="B: cancel";
+                return;
+            }
+            if(page==Page.Models)
+            {
+                menu.Title=$"Models   (current: {manifest?.displayName ?? "none"})";
+                if(layerView!=null && layerView.Any) Row("‹  Back to View",()=>{ page=Page.View; folder=null; ShowMenu(); });
+                if(ModelImport.SystemPickerAvailable) Row("Browse headset files...",StartPicker);
+                foreach(var f in ModelImport.ListImportFiles())
                 {
-                    var o=option;
-                    menuItems.Add(new MenuItem {
-                        Label=$"{group}:  {(layerView.IsOn(o) ? "(o)" : "( )")} {o.Label}{(layerView.IsWire(o) ? (layerView.IsOn(o) ? "  [wireframe]" : "  [wireframe overlay]") : "")}",
-                        Action=layerView.IsOn(o) ? "Selected" : "Select",Run=()=>{ layerView.Activate(o); OpenViewMenu(true); },
-                        AltAction=o.HasWireframe ? (layerView.IsWire(o) ? (layerView.IsOn(o) ? "Solid" : "Hide overlay") : (layerView.IsOn(o) ? "Wireframe" : "Wireframe overlay")) : null,
-                        Alt=()=>{ layerView.ToggleWireframe(o); OpenViewMenu(true); }});
+                    var path=f.FullName;
+                    Row($"{f.Name}  ({f.Length/1048576.0:F1} MB)",()=>_=ImportAsync(path,false));
                 }
-            foreach(var toggle in layerView.Toggles)
-            {
-                var t=toggle;
-                var shown=layerView.DisplayOf(t);
-                menuItems.Add(new MenuItem {
-                    Label=$"{(shown==LayerView.Display.Hidden ? "[off]  " : shown==LayerView.Display.Wireframe ? "[wire] " : "[on]   ")} {t.Label}",
-                    Action=layerView.IsOn(t) ? "Hide" : "Show",Run=()=>{ layerView.Activate(t); OpenViewMenu(true); },
-                    AltAction=t.HasWireframe ? (shown==LayerView.Display.Wireframe ? "Solid" : "Wireframe") : null,
-                    Alt=()=>{ layerView.ToggleWireframe(t); OpenViewMenu(true); }});
+                Row("Bundled sample room",()=>_=ImportAsync(null,true));
+                if(menuNote.Length>0) Lines(menuNote);
+                menu.Footer="Import folder: "+ModelImport.DeviceImportPath;
+                return;
             }
-            menuItems.Add(new MenuItem {Label="Change model...",Action="Open",Run=OpenModelsMenu});
-            menuIndex=Mathf.Clamp(index,0,menuItems.Count-1); menuOpen=true;
-        }
-
-        void OpenModelsMenu()
-        {
-            menuItems.Clear(); modelsMenu=true;
-            if(ModelImport.SystemPickerAvailable) menuItems.Add(new MenuItem {Label="Browse headset files...",Run=StartPicker});
-            foreach(var f in ModelImport.ListImportFiles())
+            // View: one folder of the model's layer tree, as in Rhino.
+            menu.Title=folder==null ? "View" : "View  ›  "+folder.Path.Replace(" > ","  ›  ");
+            if(folder!=null) Row("‹  Back",()=>OpenFolder(folder.Parent));
+            foreach(var layer in folder==null ? layerView.Roots : folder.Children)
             {
-                var path=f.FullName;
-                menuItems.Add(new MenuItem {Label=$"{f.Name}  ({f.Length/1048576.0:F1} MB)",Run=()=>_=ImportAsync(path,false)});
+                var l=layer;
+                var own=layerView.Own(l);
+                var limited=layerView.Effective(l)<own;
+                var row=Row(l.Name+(limited ? "  (limited by folder)" : ""),l.Children.Count>0 ? ()=>OpenFolder(l) : (Action)null);
+                rowLayers[rowLayers.Count-1]=l;
+                row.ArrowSlot=true;
+                Add(row,"Solid",own==LayerView.Display.Solid ? MenuPanel.Style.Solid : MenuPanel.Style.Plain,()=>SetLayer(l,LayerView.Display.Solid));
+                if(LayerView.HasWireframe(l)) Add(row,"Wire",own==LayerView.Display.Wireframe ? MenuPanel.Style.Wire : MenuPanel.Style.Plain,()=>SetLayer(l,LayerView.Display.Wireframe));
+                Add(row,"Off",own==LayerView.Display.Hidden ? MenuPanel.Style.Off : MenuPanel.Style.Plain,()=>SetLayer(l,LayerView.Display.Hidden));
+                if(l.Children.Count>0) Add(row,"›",MenuPanel.Style.Action,()=>OpenFolder(l));
             }
-            menuItems.Add(new MenuItem {Label="Bundled sample room",Run=()=>_=ImportAsync(null,true)});
-            menuIndex=0; menuOpen=true;
-            menuNote=menuItems.Count>(ModelImport.SystemPickerAvailable ? 2 : 1) ? "" : "No .3dm/.glb files in the import folder yet.";
+            if(folder==null)
+            {
+                var pointed=layerView.WireObjectCount;
+                if(pointed>0) Add(Row($"Objects made wireframe by pointing: {pointed}"),"Make all solid",MenuPanel.Style.Plain,()=>{ layerView.ClearObjects(); menuDirty=true; });
+                else if(model!=null && model.Objects.Count>1) Row("Tip: point at an object + right trigger: wireframe",null,true);
+                Row("Change model...",OpenModels);
+            }
+            menu.Footer=editorPreview ? "Mouse: point + click   Arrows + Enter   Esc: back" : "Point + right trigger, or stick + A   |   B: back";
         }
-
         void StartPicker()
         {
             try { ModelImport.OpenSystemPicker(); waitingForPicker=true; pickerPoll=0; menuNote="System file picker open: choose a .3dm or .glb file. B stops waiting."; }
@@ -352,61 +423,122 @@ namespace LabWalk
             phase=resumePhase; message="Import cancelled. The current model is unchanged.";
         }
 
-        void HandleModelUi(bool accept,bool back,bool alt)
+        void HandleModelUi(bool accept,bool back,bool press,Ray pointer,bool pointerTracked)
         {
             if(phase==Phase.Importing) { if(back) importCancel?.Cancel(); return; }
-            if(phase==Phase.Review) { if(accept) _=ConfirmAsync(); else if(back) CancelReview(); return; }
             if(waitingForPicker)
             {
                 PollPicker();
                 if(back && waitingForPicker) { waitingForPicker=false; menuNote="Stopped waiting for the picker."; }
+                menuDirty=true;
                 return;
             }
-            var move=MenuMove();
-            if(move!=0 && menuItems.Count>0) menuIndex=(menuIndex+move+menuItems.Count)%menuItems.Count;
-            if(accept && menuItems.Count>0) menuItems[menuIndex].Run();
-            else if(alt && menuItems.Count>0 && menuItems[menuIndex].Alt!=null && menuItems[menuIndex].AltAction!=null) menuItems[menuIndex].Alt();
-            else if(back) { if(modelsMenu && layerView!=null && layerView.Any) OpenViewMenu(false); else menuOpen=false; }
+            // Pointing: the row and button under the right controller's ray take the focus; the trigger presses them.
+            // (Only when the ray moves onto another target, so the sticks can still move the focus while it rests.)
+            int row=-1, column=-1;
+            var onTarget=pointerTracked && menu.Hit(pointer,out row,out column,out _) && row>=0;
+            var pointed=onTarget ? (row,column) : (-1,-1);
+            if(pointed!=lastPointed)
+            {
+                lastPointed=pointed;
+                if(onTarget) { menu.FocusRow=row; menu.FocusColumn=column; menuDirty=true; }
+            }
+            if(phase==Phase.Review)
+            {
+                if(accept) _=ConfirmAsync();
+                else if(back) CancelReview();
+                else if(press && onTarget) menu.Press();
+                return;
+            }
+            var (rows,columns)=MenuMove();
+            if(rows!=0 || columns!=0) { menu.Move(rows,columns); menuDirty=true; }
+            if(accept || (press && onTarget)) { menu.Press(); menuDirty=true; }
+            else if(back)
+            {
+                if(page==Page.Models && layerView!=null && layerView.Any) { page=Page.View; folder=null; ShowMenu(); }
+                else if(page==Page.View && folder!=null) OpenFolder(folder.Parent);
+                else CloseMenu();
+            }
         }
 
-        int MenuMove()
+        (int row,int column) lastPointed=(-1,-1);
+
+        (int rows,int columns) MenuMove()
         {
             if(editorPreview)
             {
-                var k=Keyboard.current; if(k==null) return 0;
-                return k.downArrowKey.wasPressedThisFrame ? 1 : k.upArrowKey.wasPressedThisFrame ? -1 : 0;
+                var k=Keyboard.current; if(k==null) return (0,0);
+                return (k.downArrowKey.wasPressedThisFrame ? 1 : k.upArrowKey.wasPressedThisFrame ? -1 : 0,
+                    k.rightArrowKey.wasPressedThisFrame ? 1 : k.leftArrowKey.wasPressedThisFrame ? -1 : 0);
             }
-            var y=OVRInput.Get(OVRInput.RawAxis2D.RThumbstick).y+OVRInput.Get(OVRInput.RawAxis2D.LThumbstick).y;
-            if(Mathf.Abs(y)<0.5f) { menuRepeat=0; return 0; }
-            if(Time.unscaledTime<menuRepeat) return 0;
-            menuRepeat=Time.unscaledTime+0.35f;
-            return y>0 ? -1 : 1;
+            var stick=OVRInput.Get(OVRInput.RawAxis2D.RThumbstick)+OVRInput.Get(OVRInput.RawAxis2D.LThumbstick);
+            if(stick.magnitude<0.5f) { menuRepeat=0; return (0,0); }
+            if(Time.unscaledTime<menuRepeat) return (0,0);
+            menuRepeat=Time.unscaledTime+0.3f;
+            return Mathf.Abs(stick.y)>=Mathf.Abs(stick.x) ? (stick.y>0 ? -1 : 1,0) : (0,stick.x>0 ? 1 : -1);
         }
 
-        string ModelUiText()
+        // Shows the menu panel while a menu, an import or a model review is active, and redraws it when needed.
+        void UpdateMenu()
         {
-            var text=new StringBuilder();
-            if(phase==Phase.Review && candidate!=null)
-            {
-                var m=candidate.Model; var size=m.BoundsMeters.size; var largest=Mathf.Max(size.x,size.y,size.z);
-                text.Append($"REVIEW MODEL\n{candidate.Manifest.displayName}\nFile: {candidate.Manifest.file}\n");
-                text.Append($"Units: {m.SourceUnits} -> meters (true size)\nSize: {size.x:F2} x {size.y:F2} x {size.z:F2} m (X/Y/Z)\n");
-                if(largest>300 || largest<0.3f) text.Append("CHECK UNITS: this size is unusual for a room.\n");
-                text.Append(Wrap(m.ImportSummary,66)).Append('\n').Append(Wrap(candidate.Notes,66)).Append('\n');
-                if(m.Incomplete) text.Append("WARNING: some geometry could not be imported (see summary).\n");
-                text.Append(candidate.Bundled ? "\nUsing the bundled sample replaces the imported model." : "\nThe chosen model is kept for the next launch.");
-                if(editorPreview) text.Append("\nEnter: use | Esc: cancel");
-                return text.ToString();
-            }
-            if(phase==Phase.Importing) return $"MODELS\n{Wrap(message,66)}";
-            text.Append(modelsMenu ? $"MODELS\nCurrent: {manifest?.displayName ?? "none"}\n\n" : $"VIEW  |  {manifest?.displayName}\n\n");
-            for(int i=0;i<menuItems.Count;i++) text.Append(i==menuIndex ? "> " : "   ").Append(menuItems[i].Label).Append('\n');
-            if(modelsMenu) text.Append($"\nImport folder (USB / MQDH / adb):\n{ModelImport.DeviceImportPath}\n");
-            if(menuNote.Length>0) text.Append(Wrap(menuNote,66)).Append('\n');
-            if(editorPreview) text.Append("\nUp/Down: choose | Enter: open | W: wireframe | Esc: close");
-            return text.ToString();
+            var ui=menuOpen || phase==Phase.Importing || phase==Phase.Review;
+            if(!ui) { if(menu.Visible) menu.Hide(); menuPhase=phase; return; }
+            if(!menu.Visible) { menu.Show(eye.transform); menuDirty=true; }
+            if(phase!=menuPhase) { menuPhase=phase; menuDirty=true; menu.FocusRow=0; menu.FocusColumn=-1; focusChoice=phase==Phase.Review; }
+            menu.Follow(eye.transform);
+            if(phase==Phase.Importing && Time.unscaledTime>=menuRefresh) { menuRefresh=Time.unscaledTime+0.3f; menuDirty=true; }
+            if(!menuDirty) return;
+            menuDirty=false;
+            BuildMenuRows();
+            if(focusChoice) { focusChoice=false; menu.FocusRow=menu.Rows.Count-1; menu.FocusColumn=0; }
+            menu.Render();
         }
 
+        // ---- Pointing at model objects: a label names the object; the right trigger switches it to wireframe and back ----
+
+        ObjectPicker picker;
+        readonly List<Renderer> pickRenderers=new List<Renderer>();
+        int hoverIndex, pickVersion;
+        float nextPick;
+        bool clickPending;
+
+        bool CanPick => model!=null && layerView!=null && !busy && trackingHealthy && showModel && !menuOpen &&
+            (phase==Phase.Adjust || phase==Phase.Pinned) && model.Objects.Count>1 && picker!=null && picker.Available;
+
+        void UpdatePicking(Ray ray,bool tracked,bool click)
+        {
+            if(!CanPick || !tracked) { SetHover(0); clickPending=false; view.Hover(null,default,false); return; }
+            if(click) { clickPending=true; nextPick=0; }
+            if(picker.Version!=pickVersion)
+            {
+                pickVersion=picker.Version;
+                SetHover(picker.Index);
+                if(clickPending)
+                {
+                    clickPending=false;
+                    var o=layerView.Object(hoverIndex);
+                    if(o!=null)
+                    {
+                        layerView.ToggleObject(hoverIndex);
+                        message=layerView.IsObjectWire(hoverIndex) ? $"{o.Label}: wireframe. Point + trigger again for solid; View menu: Make all solid."
+                            : $"{o.Label}: solid again.";
+                    }
+                }
+            }
+            if(!picker.Busy && Time.unscaledTime>=nextPick) { nextPick=Time.unscaledTime+0.08f; picker.Request(ray,pickRenderers); }
+            var hovered=layerView.Object(hoverIndex);
+            if(hovered==null) { view.Hover(null,default,false); return; }
+            var at=picker.HasDistance ? picker.Ray.GetPoint(picker.Distance) : ray.GetPoint(1.5f);
+            var name=string.IsNullOrEmpty(hovered.Name) ? "(unnamed object)" : hovered.Name;
+            view.Hover($"{name}\n{hovered.Layer?.Path}\nTrigger: {(layerView.IsObjectWire(hoverIndex) ? "make solid" : "make wireframe")}",at,true);
+        }
+
+        void SetHover(int index)
+        {
+            if(index==hoverIndex) return;
+            hoverIndex=index;
+            layerView?.SetHover(index);
+        }
         // Recenter diagnostics: log where the placement and anchor were just before the event and once
         // the (possibly several) origin updates have settled. With recentering disabled both should match.
         // A recenter that moves the XR origin shows up as a one-frame jump in the head pose (people cannot
@@ -483,8 +615,8 @@ namespace LabWalk
             // Floor hits count out to 20 m; past that (or pointing level/up) the ray is shown as a short fading beam.
             var hit=floor.Raycast(ray,out var distance) && distance>0 && distance<20 && ray.direction.y < -0.02f && controllerTracked;
             var point=ray.GetPoint(hit ? distance : 2);
-            view.Pointer(ray.origin,point,controllerTracked && !view.Immersive && trackingHealthy,hit);
-            // The Models menu and import review take all input while open; they work without a model
+            bool trigger=editorPreview ? Mouse.current!=null && Mouse.current.leftButton.wasPressedThisFrame : OVRInput.GetDown(OVRInput.RawButton.RIndexTrigger);
+            // The menus and import review take all input while open; they work without a model
             // (e.g. after a load error) and without tracking, since they only show the panel.
             var modelUi=menuOpen || phase==Phase.Importing || phase==Phase.Review;
             {
@@ -492,29 +624,30 @@ namespace LabWalk
                 bool accept=editorPreview ? k!=null && k.enterKey.wasPressedThisFrame : OVRInput.GetDown(OVRInput.RawButton.A);
                 bool back=editorPreview ? k!=null && (k.escapeKey.wasPressedThisFrame || k.backspaceKey.wasPressedThisFrame) : OVRInput.GetDown(OVRInput.RawButton.B);
                 bool openModels=editorPreview ? k!=null && k.oKey.wasPressedThisFrame : OVRInput.GetDown(OVRInput.RawButton.LHandTrigger);
-                bool alt=editorPreview ? k!=null && k.wKey.wasPressedThisFrame : OVRInput.GetDown(OVRInput.RawButton.X);
-                if(modelUi) HandleModelUi(accept,back,alt);
+                if(modelUi) HandleModelUi(accept,back,trigger,ray,controllerTracked);
                 else if(openModels && !busy && phase!=Phase.Saving) OpenMenu();
             }
+            UpdateMenu();
+            var pickClick=false;
             if(model!=null && !busy && trackingHealthy && !modelUi && !menuOpen)
             {
                 var keys=Keyboard.current;
-                bool trigger=editorPreview ? Mouse.current!=null && Mouse.current.leftButton.wasPressedThisFrame : OVRInput.GetDown(OVRInput.RawButton.RIndexTrigger);
                 bool save=editorPreview ? keys!=null && keys.enterKey.wasPressedThisFrame : OVRInput.GetDown(OVRInput.RawButton.A);
                 bool realign=editorPreview ? keys!=null && keys.rKey.wasPressedThisFrame : OVRInput.GetDown(OVRInput.RawButton.B);
                 bool toggle=editorPreview ? keys!=null && keys.vKey.wasPressedThisFrame : OVRInput.GetDown(OVRInput.RawButton.X);
                 bool hide=editorPreview ? keys!=null && keys.hKey.wasPressedThisFrame : OVRInput.GetDown(OVRInput.RawButton.Y);
                 bool measure=editorPreview ? keys!=null && keys.mKey.wasPressedThisFrame : OVRInput.GetDown(OVRInput.RawButton.RHandTrigger);
-                bool menu=editorPreview ? keys!=null && keys.tabKey.wasPressedThisFrame : OVRInput.GetDown(OVRInput.RawButton.Start);
+                bool helpButton=editorPreview ? keys!=null && keys.tabKey.wasPressedThisFrame : OVRInput.GetDown(OVRInput.RawButton.Start);
                 bool snap=editorPreview ? keys!=null && keys.kKey.wasPressedThisFrame : OVRInput.GetDown(OVRInput.RawButton.LIndexTrigger);
                 bool nextDesign=editorPreview ? keys!=null && keys.lKey.wasPressedThisFrame : OVRInput.GetDown(OVRInput.RawButton.LThumbstick);
                 if(nextDesign && layerView!=null && layerView.OptionGroups.Count>0)
                 {
                     var next=layerView.NextOption(layerView.OptionGroups[0]);
-                    layerView.Activate(next);
+                    layerView.Set(next,LayerView.Display.Solid);
                     message=$"Showing {layerView.OptionGroups[0]}: {next.Name}";
                 }
                 if(realign) BeginAlignment();
+                else if(trigger && (phase==Phase.Adjust || phase==Phase.Pinned)) pickClick=true;
                 else if(trigger && hit) RecordReference(point);
                 else if(snap && markers.HasSolution) ApplyMarkerFit("Re-snapped to markers");
                 if(save && phase==Phase.Adjust) _=SaveAsync();
@@ -528,7 +661,7 @@ namespace LabWalk
                     if(sessionOnly && view.Immersive && !editorPreview) message="VR with an unsaved placement: it will not be restored next launch.";
                 }
                 if(hide && !view.Immersive) showModel=!showModel;
-                if(menu) help=!help;
+                if(helpButton) help=!help;
                 if(measure && hit && !view.Immersive)
                 {
                     if(!firstMeasure) { measuredA=point; firstMeasure=true; measurement="Measuring: right grip at the other end of the known distance."; }
@@ -537,6 +670,14 @@ namespace LabWalk
                 if(phase==Phase.Adjust) FineTune();
             }
             UpdateMarkers(modelUi);
+            UpdatePicking(ray,controllerTracked,pickClick);
+            // Pointer: to the menu panel, to a pointed model object, or to the floor.
+            {
+                var end=point; var onFloor=hit; var show=controllerTracked && trackingHealthy && !view.Immersive;
+                if(modelUi && menu.Hit(ray,out _,out _,out var menuPoint)) { end=menuPoint; onFloor=false; show=controllerTracked; }
+                else if(hoverIndex>0 && picker.HasDistance) { end=picker.Ray.GetPoint(picker.Distance); onFloor=false; show=controllerTracked && trackingHealthy; }
+                view.Pointer(ray.origin,end,show && !editorPreview,onFloor);
+            }
             if(model!=null)
             {
                 var visible=showModel && trackingHealthy && anchorTracked && (phase==Phase.Adjust || phase==Phase.Pinned || phase==Phase.Saving);
@@ -551,11 +692,7 @@ namespace LabWalk
                     }
                 view.EndMarkers();
             }
-            if(Time.unscaledTime>=panelTime && (menuOpen || phase==Phase.Importing || phase==Phase.Review))
-            {
-                panelTime=Time.unscaledTime+0.15f;
-                view.UpdatePanel(ModelUiText(),true);
-            }
+            if(menu.Visible) view.UpdatePanel(null,false); // the menu panel replaces the status panel while open
             else if(Time.unscaledTime>=panelTime)
             {
                 panelTime=Time.unscaledTime+0.15f;
@@ -691,15 +828,13 @@ namespace LabWalk
                 else if(waitingForPicker) guide.Set(ControllerGuide.Control.B,"Stop waiting");
                 else
                 {
-                    if(menuItems.Count>0)
-                    {
-                        var item=menuItems[Mathf.Clamp(menuIndex,0,menuItems.Count-1)];
-                        guide.Set(ControllerGuide.Control.A,item.Action);
-                        guide.Set(ControllerGuide.Control.X,item.AltAction);
-                    }
-                    guide.Set(ControllerGuide.Control.B,modelsMenu && layerView!=null && layerView.Any ? "Back" : "Close");
-                    guide.Set(ControllerGuide.Control.RightStick,"Choose"); guide.Set(ControllerGuide.Control.LeftStick,"Choose");
+                    guide.Set(ControllerGuide.Control.A,"Press");
+                    guide.Set(ControllerGuide.Control.RightTrigger,"Press (point)");
+                    var top=page==Page.View ? folder==null : !(layerView!=null && layerView.Any);
+                    guide.Set(ControllerGuide.Control.B,top ? "Close" : "Back");
+                    guide.Set(ControllerGuide.Control.RightStick,"Move"); guide.Set(ControllerGuide.Control.LeftStick,"Move");
                 }
+                if(phase==Phase.Review) guide.Set(ControllerGuide.Control.RightTrigger,"Press (point)");
                 return;
             }
             guide.Set(ControllerGuide.Control.Menu,"Hide help");
@@ -728,6 +863,7 @@ namespace LabWalk
                 case Phase.Error: return;
             }
             if(passthrough && (phase==Phase.Adjust || phase==Phase.Pinned)) guide.Set(ControllerGuide.Control.Y,showModel ? "Hide model" : "Show model");
+            if(CanPick && hoverIndex>0) guide.Set(ControllerGuide.Control.RightTrigger,layerView.IsObjectWire(hoverIndex) ? "Make solid" : "Make wireframe");
             if(passthrough && phase!=Phase.Loading) guide.Set(ControllerGuide.Control.RightGrip,firstMeasure ? "Measure: end point" : "Measure floor");
             if(markers.HasSolution && (phase==Phase.Adjust || phase==Phase.Pinned)) guide.Set(ControllerGuide.Control.LeftTrigger,"Snap to markers");
         }
@@ -788,6 +924,7 @@ namespace LabWalk
         {
             RecenterGuard.Recentered-=OnRecentered; RecenterGuard.Unhook();
             lifetime.Cancel(); candidate?.Dispose(); model?.Dispose(); lifetime.Dispose();
+            picker?.Release(); layerView?.Release();
         }
     }
 }

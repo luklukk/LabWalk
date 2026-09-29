@@ -119,6 +119,45 @@ namespace LabWalk
         { ruler.enabled=true; ruler.SetPosition(0,a+Vector3.up*0.02f); ruler.SetPosition(1,b+Vector3.up*0.02f); }
         public void ClearMeasurement() { ruler.enabled=false; }
 
+        // Name of the model object under the pointer, beside the pointed spot, facing the viewer at a constant
+        // apparent size, drawn on top of the model.
+        Transform hoverLabel, hoverBack;
+        TextMesh hoverText;
+        public void Hover(string content,Vector3 position,bool visible)
+        {
+            if(!visible) { if(hoverLabel) hoverLabel.gameObject.SetActive(false); return; }
+            if(!hoverLabel)
+            {
+                hoverLabel=new GameObject("Pointed object label").transform;
+                var textObject=new GameObject("Text"); textObject.transform.SetParent(hoverLabel,false);
+                hoverText=textObject.AddComponent<TextMesh>();
+                hoverText.font=text.font; hoverText.fontSize=48; hoverText.characterSize=0.024f*10/48;
+                hoverText.anchor=TextAnchor.LowerLeft; hoverText.color=Color.white; hoverText.richText=false;
+                var fontMaterial=new Material(text.font.material) {renderQueue=4010};
+                fontMaterial.SetInt("unity_GUIZTestMode",(int)UnityEngine.Rendering.CompareFunction.Always);
+                textObject.GetComponent<MeshRenderer>().sharedMaterial=fontMaterial;
+                var back=GameObject.CreatePrimitive(PrimitiveType.Quad);
+                back.name="Backing"; Object.Destroy(back.GetComponent<Collider>());
+                back.transform.SetParent(hoverLabel,false);
+                var overlay=Resources.Load<Shader>("LabWalkOverlay");
+                back.GetComponent<Renderer>().sharedMaterial=new Material(overlay ? overlay : Shader.Find("Unlit/Color")) {color=new Color(0.025f,0.04f,0.055f),renderQueue=4000};
+                hoverBack=back.transform;
+            }
+            hoverLabel.gameObject.SetActive(true);
+            if(hoverText.text!=content)
+            {
+                hoverText.text=content;
+                var size=hoverText.GetComponent<Renderer>().localBounds.size;
+                hoverBack.localScale=new Vector3(size.x+0.012f,size.y+0.008f,1);
+                hoverBack.localPosition=new Vector3(size.x/2,size.y/2,0.001f);
+            }
+            var head=camera.transform;
+            var distance=Mathf.Clamp(Vector3.Distance(head.position,position),0.3f,8f);
+            hoverLabel.localScale=Vector3.one*distance;
+            hoverLabel.position=position+(head.right*0.02f+head.up*0.02f)*distance;
+            hoverLabel.rotation=Quaternion.LookRotation(hoverLabel.position-head.position,head.up);
+        }
+
         // Calibration markers: magenta cross where the placed model expects each QR code, cyan where it is seen.
         readonly System.Collections.Generic.List<LineRenderer> crosses=new System.Collections.Generic.List<LineRenderer>();
         int crossesUsed;

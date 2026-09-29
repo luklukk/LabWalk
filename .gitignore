@@ -24,3 +24,4 @@
 # Local AI-agent tooling installed by Meta XR Operator; not part of the app.
 /.codex/
 !/Tools/ScanTests/ScanTests.csproj
+/Tools/**/TestResults/

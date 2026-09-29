@@ -35,7 +35,8 @@ namespace LabWalk
                     var parentLayer=g.Parent>=0 ? layers[g.Parent] : null;
                     var go=new GameObject((g.Kind==LayerGroupKind.Option ? "Option " : "Toggle ")+g.LayerPath);
                     go.transform.SetParent(parentLayer!=null ? parentLayer.Root.transform : root.transform,false);
-                    layers.Add(new ModelLayer {Kind=g.Kind,OptionGroup=g.OptionGroup,Name=g.Name,DefaultOn=g.DefaultOn,Parent=parentLayer,Root=go});
+                    var layer=new ModelLayer {Kind=g.Kind,OptionGroup=g.OptionGroup,Name=g.Name,DefaultOn=g.DefaultOn,Order=g.Order,Parent=parentLayer,Root=go};
+                    layers.Add(layer);
                 }
                 foreach(var part in decoded.Meshes)
                 {
@@ -44,6 +45,7 @@ namespace LabWalk
                     resources.Items.Add(mesh);
                     mesh.vertices=Vectors(part.Positions);
                     mesh.triangles=part.Triangles;
+                    if(part.ObjectIds!=null) mesh.uv=Ids(part.ObjectIds); // object index per vertex, for pointing and per-object wireframe
                     if(part.Normals!=null) mesh.normals=Vectors(part.Normals); else mesh.RecalculateNormals();
                     mesh.RecalculateBounds();
                     if(first) { bounds=mesh.bounds; first=false; } else bounds.Encapsulate(mesh.bounds);
@@ -77,6 +79,7 @@ namespace LabWalk
                     var lineMesh=new Mesh {name="Wireframe",indexFormat=IndexFormat.UInt32};
                     resources.Items.Add(lineMesh);
                     lineMesh.vertices=Vectors(line.Positions);
+                    if(line.ObjectIds!=null) lineMesh.uv=Ids(line.ObjectIds);
                     lineMesh.SetIndices(line.Indices,MeshTopology.Lines,0);
                     lineMesh.RecalculateBounds();
                     lineMesh.UploadMeshData(true);
@@ -86,6 +89,9 @@ namespace LabWalk
                     wire.AddComponent<MeshRenderer>().sharedMaterial=wireMaterial;
                     wire.SetActive(false);
                     layers[line.Group].Wire.Add(wire);
+                    var ids=new HashSet<int>();
+                    if(line.ObjectIds!=null) foreach(var id in line.ObjectIds) ids.Add((int)id);
+                    layers[line.Group].WireObjects.Add(ids);
                     await Task.Yield();
                 }
                 token.ThrowIfCancellationRequested();
@@ -99,13 +105,27 @@ namespace LabWalk
                 }
                 foreach(var marker in decoded.Markers) loaded.Markers[marker.Key]=new Vector3(marker.Value[0],marker.Value[1],marker.Value[2]);
                 // Layers without any geometry (e.g. only curves or labels) are not offered as switches.
-                foreach(var layer in layers) if(layer.Root.GetComponentInChildren<Renderer>(true)) loaded.Layers.Add(layer);
+                foreach(var layer in layers)
+                    if(layer.Root.GetComponentInChildren<Renderer>(true)) { loaded.Layers.Add(layer); layer.Parent?.Children.Add(layer); }
+                foreach(var layer in loaded.Layers) layer.Children.Sort((a,b)=>a.Order.CompareTo(b.Order));
+                for(int i=1;i<decoded.Objects.Count;i++)
+                {
+                    var o=decoded.Objects[i];
+                    loaded.Objects.Add(new ModelObject {Index=i,Id=o.Id,Name=o.Name,Layer=o.Group>=0 ? layers[o.Group] : null});
+                }
                 return loaded;
             }
             catch { UnityEngine.Object.Destroy(root); resources.Dispose(); throw; }
         }
 
         public static readonly Color WireColor=new Color(1f,0.55f,0.1f); // high contrast against gray architecture
+
+        static Vector2[] Ids(float[] ids)
+        {
+            var result=new Vector2[ids.Length];
+            for(int i=0;i<ids.Length;i++) result[i]=new Vector2(ids[i],0);
+            return result;
+        }
 
         static Vector3[] Vectors(float[] values)
         {

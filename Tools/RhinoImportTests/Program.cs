@@ -208,23 +208,34 @@ static class Program
             file.AllInstanceDefinitions.Add("bench","",Point3d.Origin,new GeometryBase[]{Box(0,0,0,1,1,1)},new[]{new ObjectAttributes {LayerIndex=shell}});
             file.Objects.AddInstanceObject(new InstanceReferenceGeometry(file.AllInstanceDefinitions.First(x=>x.Name=="bench").Id,Transform.Translation(12,0,0)),new ObjectAttributes {LayerIndex=tools});
             var d=RhinoModelReader.Read(Save(file,"switchable-layers"),null,CancellationToken.None);
+            // Every layer on the way to an imported object is a node of the view tree, mirroring Rhino.
             int G(string name)=>d.Groups.FindIndex(g=>g.Name==name);
-            Check(d.Groups.Count==5,"Five switchable layers: "+string.Join(", ",d.Groups.Select(g=>g.Kind+" "+g.OptionGroup+"/"+g.Name)));
-            var ex=d.Groups[G("Existing")]; var ren=d.Groups[G("Renovation")]; var nf=d.Groups[G("New furniture")]; var tl=d.Groups[G("Tools")]; var lb=d.Groups[G("Layout B")];
+            Check(d.Groups.Count==7,"Seven layer nodes: "+string.Join(", ",d.Groups.Select(g=>g.Kind+" "+g.OptionGroup+"/"+g.Name)));
+            var sh=d.Groups[G("Shell")]; var ex=d.Groups[G("Existing")]; var ren=d.Groups[G("Renovation")]; var nw=d.Groups[G("New walls")]; var nf=d.Groups[G("New furniture")]; var tl=d.Groups[G("Tools")]; var lb=d.Groups[G("Layout B")];
+            Check(sh.Kind==LayerGroupKind.Toggle && sh.DefaultOn && sh.Parent==-1,"Plain top-level layer is a switchable node, on");
             Check(ex.Kind==LayerGroupKind.Option && ex.OptionGroup=="Design" && ex.DefaultOn,"Existing is a default-on Design option");
             Check(ren.Kind==LayerGroupKind.Option && !ren.DefaultOn,"Renovation is an option, off in the file");
+            Check(nw.Kind==LayerGroupKind.Toggle && nw.Parent==G("Renovation") && nw.DefaultOn,"Plain sublayer inside Renovation is a node and keeps its remembered state");
             Check(nf.Kind==LayerGroupKind.Toggle && nf.Parent==G("Renovation") && nf.DefaultOn,"Nested toggle inside Renovation keeps its remembered state");
             Check(tl.Kind==LayerGroupKind.Toggle && tl.DefaultOn && lb.OptionGroup=="Furniture","Case-insensitive toggle; named option group");
+            Check(G("Retired")<0,"Layer turned off in Rhino is not a node");
             int MeshesIn(int g)=>d.Meshes.Count(m=>m.Group==g);
-            Check(MeshesIn(-1)==1 && MeshesIn(G("Existing"))==1 && MeshesIn(G("Renovation"))==1 && MeshesIn(G("New furniture"))==1 && MeshesIn(G("Layout B"))==1,"Meshes split per switchable layer (hidden option still imported)");
-            Check(MeshesIn(G("Tools"))==1 && d.Hidden==1,"Block on a toggle layer belongs to it; user-hidden sublayer stays excluded");
-            // Wireframe: each box on a switchable layer yields its 12 edges; coplanar quad diagonals are dropped.
+            Check(MeshesIn(-1)==0 && MeshesIn(G("Shell"))==1 && MeshesIn(G("Existing"))==1 && MeshesIn(G("Renovation"))==0 && MeshesIn(G("New walls"))==1 && MeshesIn(G("New furniture"))==1 && MeshesIn(G("Layout B"))==1,"Meshes split per layer node (hidden option still imported)");
+            Check(MeshesIn(G("Tools"))==1 && d.Hidden==1,"Block on a toggle layer belongs to it even with parts on a plain layer; user-hidden sublayer stays excluded");
+            // Wireframe: each box yields its 12 edges; coplanar quad diagonals are dropped.
             int Segments(int g)=>d.Lines.Where(l=>l.Group==g).Sum(l=>l.Indices.Length/2);
-            Check(d.Lines.All(l=>l.Group>=0),"No wireframe for always-shown geometry");
-            foreach(var name in new[]{"Existing","Renovation","New furniture","Tools","Layout B"})
+            foreach(var name in new[]{"Shell","Existing","New walls","New furniture","Tools","Layout B"})
                 Check(Segments(G(name))==12,$"Box on {name} has 12 feature edges, got {Segments(G(name))}");
             var existingLines=d.Lines.First(l=>l.Group==G("Existing"));
             Check(existingLines.Positions.Length/3==8,"Welded box corners: 8 line vertices");
+            // Objects for pointing: one per visible top-level object (a block instance is one), carried by every vertex.
+            Check(d.Objects.Count==7 && d.Objects[0]==null,$"Six pointable objects plus the reserved index 0, got {d.Objects.Count-1}");
+            Check(d.Meshes.All(m=>m.ObjectIds!=null && m.ObjectIds.Length==m.Positions.Length/3 && m.ObjectIds.All(id=>id>0)),"Every mesh vertex carries an object index");
+            Check(d.Lines.All(l=>l.ObjectIds!=null && l.ObjectIds.Length==l.Positions.Length/3),"Every line vertex carries an object index");
+            var bench=d.Objects.FindIndex(o=>o!=null && o.Name=="bench");
+            Check(bench>0 && d.Objects[bench].Group==G("Tools"),"Unnamed block instance is named after its block and belongs to the instance's layer");
+            Check(d.Meshes.Where(m=>m.Group==G("Tools")).All(m=>m.ObjectIds.All(id=>(int)id==bench)),"Block parts carry the instance's object index");
+            Check(d.Meshes.Where(m=>m.Group==G("Existing")).All(m=>m.ObjectIds.Distinct().Count()==1),"One object per box");
             Check(LayerGroupNames.TryParse("  Option :  Scheme / B ",out var k,out var og,out var n) && k==LayerGroupKind.Option && og=="Scheme" && n=="B","Name parsing");
             Check(!LayerGroupNames.TryParse("Options for later",out _,out _,out _) && !LayerGroupNames.TryParse("Toggle:",out _,out _,out _),"Non-matching names ignored");
         }
